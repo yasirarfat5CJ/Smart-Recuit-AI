@@ -1,0 +1,8 @@
+Node.js
+Express.js
+MongoDB
+Mongoose
+Socket.io
+# OpenAI/Gemini API
+Multer
+pdf-parse
