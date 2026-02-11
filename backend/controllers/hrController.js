@@ -18,7 +18,7 @@ const getAllCandidates = async (req, res) => {
           .sort({ createdAt: -1 });
 
         return {
-
+           _id: candidate._id, 
           name: candidate.name,
           atsScore: candidate.atsScore,
 
@@ -102,6 +102,43 @@ const getDashboardStats = async (req, res) => {
   }
 
 };
+const getSingleCandidate = async (req, res) => {
+
+  try {
+
+    const candidate = await Candidate.findById(req.params.id);
+
+    if (!candidate) {
+      return res.status(404).json({ message: "Candidate not found" });
+    }
+
+    const session = await InterviewSession
+      .findOne({ candidateId: req.params.id })
+      .sort({ createdAt: -1 });
+
+    res.json({
+
+      _id: candidate._id,
+
+      name: candidate.name,
+
+      atsScore: candidate.atsScore,
+
+      parsedResume: candidate.parsedResume,
+
+      totalScore: session?.totalScore || 0,
+
+      finalSummary: session?.finalSummary || null
+
+    });
+
+  } catch (error) {
+
+    res.status(500).json({ message: error.message });
+
+  }
+
+};
 
 
-module.exports = { getAllCandidates,getDashboardStats };
+module.exports = { getAllCandidates,getDashboardStats,getSingleCandidate };

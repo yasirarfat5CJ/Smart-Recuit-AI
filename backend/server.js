@@ -14,7 +14,7 @@ const askAI = require('./config/aiClient');
 const resumeRoutes = require("./routes/resumeRoutes");
 const jobRoutes = require("./routes/jobRoutes");
 const hrRoutes = require("./routes/hrRoutes");
-
+const authRoutes=require("./routes/authRoutes")
 // 3. Initialize Socket.io using the lowercase 'server' variable
 const io = new SocketServer(server, {
   cors: {
@@ -31,6 +31,8 @@ app.use(cors());
 app.use("/api/resume", resumeRoutes);
 app.use("/api/jobs", jobRoutes);
 app.use("/api/hr", hrRoutes);
+app.use("/api/auth",authRoutes);
+
 
 // Connect Database 
 connectDb();

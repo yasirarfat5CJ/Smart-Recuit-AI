@@ -2,6 +2,7 @@ const express=require('express')
 const multer=require('multer')
 
 const {uploadResume} =require("../controllers/resumeControllers")
+const { protect, authorizeRoles } = require("../middleware/authMiddleware");
 
 const router=express.Router();
 
@@ -17,6 +18,6 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage: storage });
-router.post('/upload',upload.single("resume"),uploadResume)
+router.post('/upload',protect,authorizeRoles("candidate"),upload.single("resume"),uploadResume)
 
 module.exports=router

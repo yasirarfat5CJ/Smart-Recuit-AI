@@ -4,49 +4,80 @@ const calculateATSScore = async (candidate, job) => {
 
   let score = 0;
 
-  const candidateSkills = candidate.skills || [];
-  const jobSkills = job.requiredSkills || [];
+  const candidateSkills = (candidate.skills || []).map(s => s.toLowerCase());
+  const jobSkills = (job.requiredSkills || []).map(s => s.toLowerCase());
 
-
+  
   const matchedSkills = candidateSkills.filter(skill =>
     jobSkills.includes(skill)
   );
 
   if (jobSkills.length > 0) {
-    score += (matchedSkills.length / jobSkills.length) * 40;
+
+    const keywordScore = (matchedSkills.length / jobSkills.length) * 30;
+
+    score += keywordScore;
+
   }
 
- 
-
+  
   const semanticPrompt = `
-Compare these skills:
+Compare candidate skills with job skills.
 
 Candidate Skills: ${candidateSkills.join(",")}
 Job Skills: ${jobSkills.join(",")}
 
-Return ONLY a number between 0 and 30 representing semantic similarity score.
+Return ONLY comma separated RELATED skills from candidate matching job context.
+Example: react,nodejs,typescript
 `;
 
   const aiResult = await askAI(semanticPrompt);
 
-  const semanticScore = parseInt(aiResult) || 0;
+  let semanticMatches = [];
 
-  score += semanticScore;
-
-
-  const experienceYears = candidate.experience?.length || 0;
-
-  if (experienceYears >= job.minExperienceYears) {
-    score += 20;
+  if (aiResult) {
+    semanticMatches = aiResult
+      .toLowerCase()
+      .split(",")
+      .map(s => s.trim());
   }
 
-  
+  const uniqueSemanticMatches = semanticMatches.filter(skill =>
+    jobSkills.includes(skill)
+  );
 
-  if (candidate.projects?.length > 0) {
-    score += 10;
+  if (jobSkills.length > 0) {
+
+    const semanticScore = (uniqueSemanticMatches.length / jobSkills.length) * 30;
+
+    score += semanticScore;
+
+  }
+
+
+
+  const candidateExperience = candidate.experienceYears || 0;
+  const requiredExperience = job.minExperienceYears || 0;
+
+  if (candidateExperience >= requiredExperience) {
+
+    score += 25;
+
+  } else {
+
+    score += (candidateExperience / requiredExperience) * 25;
+
+  }
+
+ 
+  if (candidate.projects && candidate.projects.length > 0) {
+
+    score += 15;
+
   }
 
   return Math.round(score);
+
 };
 
 module.exports = calculateATSScore;
