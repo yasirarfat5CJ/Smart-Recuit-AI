@@ -1,6 +1,19 @@
 const Candidate = require("../models/Candidate");
 const InterviewSession = require("../models/interviewSession");
 
+const buildOwnerQuery = (user) => {
+  const orConditions = [{ userId: user._id }];
+
+  if (user.email) {
+    const escapedEmail = String(user.email).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    orConditions.push({
+      email: { $regex: `^${escapedEmail}$`, $options: "i" }
+    });
+  }
+
+  return { $or: orConditions };
+};
+
 const getAllCandidates = async (req, res) => {
 
   try {
@@ -43,6 +56,48 @@ const getAllCandidates = async (req, res) => {
     });
 
     res.json(result);
+
+  } catch (error) {
+
+    res.status(500).json({ message: error.message });
+
+  }
+
+};
+
+const getMyCandidateDashboard = async (req, res) => {
+
+  try {
+
+    const ownerQuery = buildOwnerQuery(req.user);
+    const uploadCount = await Candidate.countDocuments(ownerQuery);
+
+    if (uploadCount === 0) {
+      return res.status(404).json({ message: "No resumes uploaded yet" });
+    }
+
+    const latestCandidate = await Candidate.findOne(ownerQuery).sort({ createdAt: -1 });
+
+    if (!latestCandidate) {
+      return res.status(404).json({ message: "Candidate not found" });
+    }
+
+    const session = await InterviewSession
+      .findOne({ candidateId: latestCandidate._id })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      uploadCount,
+      latestCandidate: {
+        _id: latestCandidate._id,
+        name: latestCandidate.name,
+        atsScore: latestCandidate.atsScore,
+        parsedResume: latestCandidate.parsedResume,
+        totalScore: session?.totalScore || 0,
+        finalSummary: session?.finalSummary || null,
+        interviewPending: !session?.finalSummary
+      }
+    });
 
   } catch (error) {
 
@@ -112,6 +167,19 @@ const getSingleCandidate = async (req, res) => {
       return res.status(404).json({ message: "Candidate not found" });
     }
 
+    if (req.user?.role === "candidate") {
+      const ownsByUserId =
+        candidate.userId && String(candidate.userId) === String(req.user._id);
+      const ownsByEmail =
+        candidate.email &&
+        req.user.email &&
+        String(candidate.email).toLowerCase() === String(req.user.email).toLowerCase();
+
+      if (!ownsByUserId && !ownsByEmail) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+    }
+
     const session = await InterviewSession
       .findOne({ candidateId: req.params.id })
       .sort({ createdAt: -1 });
@@ -140,5 +208,38 @@ const getSingleCandidate = async (req, res) => {
 
 };
 
+const deleteCandidate = async (req, res) => {
 
-module.exports = { getAllCandidates,getDashboardStats,getSingleCandidate };
+  try {
+
+    const candidate = await Candidate.findById(req.params.id);
+
+    if (!candidate) {
+      return res.status(404).json({ message: "Candidate not found" });
+    }
+
+    const deletedInterviews = await InterviewSession.deleteMany({
+      candidateId: req.params.id
+    });
+    await Candidate.findByIdAndDelete(req.params.id);
+
+    res.json({
+      message: "Candidate deleted successfully",
+      deletedInterviewCount: deletedInterviews.deletedCount || 0
+    });
+
+  } catch (error) {
+
+    res.status(500).json({ message: error.message });
+
+  }
+
+};
+
+module.exports = {
+  getAllCandidates,
+  getDashboardStats,
+  getMyCandidateDashboard,
+  getSingleCandidate,
+  deleteCandidate
+};

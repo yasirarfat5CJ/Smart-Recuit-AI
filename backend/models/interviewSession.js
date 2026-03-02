@@ -24,14 +24,13 @@ const interviewSessionSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-finalSummary: {
-     type: Object,
-  default: null,
-  strengths: String,
-  weaknesses: String,
-  recommendation: String,
-  overallRating: Number
-}
+  finalSummary: {
+    strengths: String,
+    weaknesses: String,
+    overallFeedback: String,
+    recommendation: String,
+    overallRating: Number
+  }
 
  
 

@@ -1,26 +1,88 @@
 const askAI = require("../config/aiClient");
+const jwt = require("jsonwebtoken");
 const Candidate = require("../models/Candidate");
 const InterviewSession = require("../models/interviewSession");
+const User = require("../models/User");
 
 module.exports = (io) => {
+  const buildFallbackSummary = () => ({
+    strengths: "Good effort during the interview.",
+    weaknesses: "Could not generate a detailed AI summary.",
+    overallFeedback: "Please retry the interview summary or review chat transcript manually.",
+    recommendation: "No Hire",
+    overallRating: 0
+  });
+
+  const parseJsonFromResponse = (raw) => {
+    if (typeof raw !== "string" || !raw.trim()) {
+      throw new Error("Empty AI response");
+    }
+
+    const cleanJson = raw
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+
+    if (!jsonMatch) {
+      throw new Error("No JSON object found");
+    }
+
+    return JSON.parse(jsonMatch[0]);
+  };
+
+  const normalizeRecommendation = (value) => {
+    const text = String(value || "").toLowerCase().trim();
+    if (text === "hire") return "Hire";
+    if (text === "no hire" || text === "nohire" || text === "reject") return "No Hire";
+    return "N/A";
+  };
+
+  io.use(async (socket, next) => {
+    try {
+      const token =
+        socket.handshake.auth?.token ||
+        socket.handshake.headers?.authorization?.split(" ")[1];
+
+      if (!token) {
+        return next(new Error("Unauthorized"));
+      }
+
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || "secretkey");
+      const user = await User.findById(decoded.id).select("role email");
+
+      if (!user) {
+        return next(new Error("Unauthorized"));
+      }
+
+      socket.user = {
+        id: decoded.id,
+        role: user.role,
+        email: user.email
+      };
+      next();
+    } catch (err) {
+      next(new Error("Unauthorized"));
+    }
+  });
 
   io.on("connection", (socket) => {
 
     console.log("User connected:", socket.id);
 
-   
     let messages = [];
-
-    
     let sessionId = null;
-    let totalScore = 0;
-    let questionCount = 0;
 
- 
+    // ⭐ Prevent repeated questions
+    let askedQuestions = new Set();
 
     socket.on("startInterview", async ({ candidateId }) => {
 
       try {
+        if (socket.user?.role !== "candidate") {
+          return socket.emit("error", "Only candidates can start interviews");
+        }
 
         const candidate = await Candidate.findById(candidateId);
 
@@ -28,36 +90,52 @@ module.exports = (io) => {
           return socket.emit("error", "Candidate not found");
         }
 
-        // Create interview session
+        const ownsByUserId =
+          candidate.userId && String(candidate.userId) === String(socket.user.id);
+        const ownsByEmail =
+          candidate.email &&
+          socket.user.email &&
+          String(candidate.email).toLowerCase() === String(socket.user.email).toLowerCase();
+
+        if (!ownsByUserId && !ownsByEmail) {
+          return socket.emit("error", "Access denied");
+        }
+
         const session = await InterviewSession.create({
           candidateId,
-          messages: [],
-          totalScore: 0,
-          questionCount: 0
+          messages: []
         });
 
         sessionId = session._id;
 
-        // Initialize memory
+        // ⭐ Senior-level interviewer personality
         messages = [
           {
             role: "system",
             content: `
-You are a professional technical interviewer.
+You are a SENIOR technical interviewer.
+
+INTERVIEW STYLE:
+
+- Think like experienced FAANG interviewer.
+- Humans rarely give perfect answers — accept partial understanding.
+- Evaluate conceptual clarity instead of exact wording.
+- Encourage candidate when answer is related or logically correct.
+- Ask ONE question at a time.
+- Increase difficulty gradually.
+- Ask follow-up questions based on candidate responses.
+- NEVER repeat any previously asked question.
+- Maintain natural conversational interview flow.
 
 Candidate skills:
 ${JSON.stringify(candidate.parsedResume.skills)}
-
-Rules:
-- Ask ONE question at a time.
-- Increase difficulty gradually.
-- Focus on technical evaluation.
 `
           }
         ];
 
-        // Ask first question
         const firstQuestion = await askAI(messages);
+
+        askedQuestions.add(firstQuestion);
 
         messages.push({
           role: "assistant",
@@ -69,14 +147,11 @@ Rules:
       } catch (err) {
 
         console.log("Start Interview Error:", err);
-
         socket.emit("error", "Interview start failed");
 
       }
 
     });
-
-    
 
     socket.on("candidateAnswer", async ({ answer }) => {
 
@@ -86,27 +161,37 @@ Rules:
           return socket.emit("error", "Session not initialized");
         }
 
-        // Save candidate answer
         messages.push({
           role: "user",
           content: answer
         });
 
+        // ⭐ Senior evaluation prompt
         const evaluationPrompt = [
           ...messages,
           {
             role: "system",
             content: `
-You are a technical interviewer.
+You are a senior technical interviewer.
 
-Evaluate the LAST candidate answer.
+TASK:
+
+- Understand candidate answer from HUMAN perspective.
+- Accept related or partially correct answers.
+- Give constructive and supportive feedback.
+- Focus on reasoning, not perfection.
+
+IMPORTANT:
+
+- DO NOT repeat any previously asked question.
+- Generate a NEW relevant technical question.
+- Adapt difficulty based on conversation.
 
 Return ONLY valid JSON:
 
 {
-  "score": number between 0-10,
-  "feedback": "short feedback",
-  "nextQuestion": "next technical question"
+  "feedback": "human-like supportive feedback",
+  "nextQuestion": "new technical question"
 }
 `
           }
@@ -116,7 +201,6 @@ Return ONLY valid JSON:
 
         console.log("AI RAW RESPONSE:", aiResponse);
 
-        // Clean JSON safely
         const cleanJson = aiResponse
           .replace(/```json/g, "")
           .replace(/```/g, "")
@@ -130,50 +214,51 @@ Return ONLY valid JSON:
 
         const evaluation = JSON.parse(jsonMatch[0]);
 
-        // Update tracking
-        totalScore += evaluation.score;
-        questionCount += 1;
+        // ⭐ Prevent repeated questions (backend safety)
+        if (askedQuestions.has(evaluation.nextQuestion)) {
 
-        // Save next question into memory
+          evaluation.nextQuestion =
+            "Let's explore deeper: explain an advanced concept related to your previous answer.";
+
+        }
+
+        askedQuestions.add(evaluation.nextQuestion);
+
         messages.push({
           role: "assistant",
           content: evaluation.nextQuestion
         });
 
-        // Update DB session
         await InterviewSession.findByIdAndUpdate(sessionId, {
-          messages,
-          totalScore,
-          questionCount
+          messages
         });
 
-        // Send evaluation + next question
         socket.emit("aiEvaluation", evaluation);
 
       } catch (err) {
 
         console.log("Evaluation Error:", err);
-
         socket.emit("error", "AI evaluation failed");
 
       }
 
     });
+
     socket.on("endInterview", async () => {
 
-  try {
+      try {
 
-    if (!sessionId) {
-      return socket.emit("error", "Session not found");
-    }
+        if (!sessionId) {
+          return socket.emit("error", "Session not found");
+        }
 
-    const summaryPrompt = [
+        const summaryPrompt = [
 
-      ...messages,
+          ...messages,
 
-      {
-        role: "system",
-        content: `
+          {
+            role: "system",
+            content: `
 You are a senior technical interviewer.
 
 Analyze the full interview conversation.
@@ -183,51 +268,47 @@ Return ONLY valid JSON:
 {
   "strengths": "candidate strengths",
   "weaknesses": "areas of improvement",
-  "overallRating": number between 0-10,
-  "recommendation": "Hire or No Hire"
+  "overallFeedback": "professional final evaluation",
+  "recommendation": "Hire or No Hire",
+  "overallRating": 0
 }
 `
+          }
+
+        ];
+
+        let finalSummary = buildFallbackSummary();
+
+        try {
+          const aiResponse = await askAI(summaryPrompt);
+          const parsedSummary = parseJsonFromResponse(aiResponse);
+          const rating = Number(parsedSummary.overallRating);
+
+          finalSummary = {
+            strengths: parsedSummary.strengths || finalSummary.strengths,
+            weaknesses: parsedSummary.weaknesses || finalSummary.weaknesses,
+            overallFeedback: parsedSummary.overallFeedback || finalSummary.overallFeedback,
+            recommendation: normalizeRecommendation(parsedSummary.recommendation),
+            overallRating: Number.isFinite(rating) ? rating : 0
+          };
+        } catch (summaryErr) {
+          console.log("Summary Parse Error:", summaryErr.message);
+        }
+
+        await InterviewSession.findByIdAndUpdate(sessionId, {
+          finalSummary
+        });
+
+        socket.emit("finalSummary", finalSummary);
+
+      } catch (err) {
+
+        console.log("Summary Error:", err);
+        socket.emit("error", "Final summary generation failed");
+
       }
 
-    ];
-
-    const aiResponse = await askAI(summaryPrompt);
-
-    console.log("FINAL SUMMARY RAW:", aiResponse);
-
-    // Clean JSON
-    const cleanJson = aiResponse
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
-
-    const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
-      throw new Error("Invalid summary JSON");
-    }
-
-    const finalSummary = JSON.parse(jsonMatch[0]);
-
-    // Save into DB
-    await InterviewSession.findByIdAndUpdate(sessionId, {
-      finalSummary
     });
-
-    socket.emit("finalSummary", finalSummary);
-
-  } catch (err) {
-
-    console.log("Summary Error:", err);
-
-    socket.emit("error", "Final summary generation failed");
-
-  }
-
-});
-
-
-    
 
     socket.on("disconnect", () => {
 

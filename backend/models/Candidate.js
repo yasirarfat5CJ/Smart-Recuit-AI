@@ -3,6 +3,11 @@ const { stream } = require('pdf-parse-new')
 
 const candidateSchema=new mongoose.Schema(
     {
+        userId:{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            default: null
+        },
         name:{
             type:String,
             default:"",

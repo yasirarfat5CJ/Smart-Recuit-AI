@@ -60,7 +60,9 @@ const uploadResume = async (req, res) => {
 
     // Step 4 — Save candidate
     const candidate = await Candidate.create({
+      userId: req.user?._id || null,
       name: parsedJson.name || "",
+      email: req.user?.email || parsedJson.email || "",
       parsedResume: parsedJson,
       atsScore
     });

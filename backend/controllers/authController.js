@@ -18,14 +18,24 @@ exports.register = async (req,res)=>{
 
     const hashedPassword = await bcrypt.hash(password,10);
 
+    const safeRole = role === "hr" ? "hr" : "candidate";
+
     const user = await User.create({
       name,
       email,
       password: hashedPassword,
-      role
+      role: safeRole
     });
 
-    res.json({ message:"User registered", user });
+    res.status(201).json({
+      message:"User registered",
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
 
   }catch(err){
 

@@ -4,10 +4,11 @@ const calculateATSScore = async (candidate, job) => {
 
   let score = 0;
 
+  // Normalize skills
   const candidateSkills = (candidate.skills || []).map(s => s.toLowerCase());
   const jobSkills = (job.requiredSkills || []).map(s => s.toLowerCase());
 
-  
+ 
   const matchedSkills = candidateSkills.filter(skill =>
     jobSkills.includes(skill)
   );
@@ -20,46 +21,67 @@ const calculateATSScore = async (candidate, job) => {
 
   }
 
-  
-  const semanticPrompt = `
-Compare candidate skills with job skills.
+ 
+  let semanticScore = 0;
+
+  if (candidateSkills.length && jobSkills.length) {
+
+    const semanticPrompt = `
+You are an ATS skill matcher.
+
+Find RELATED skills between candidate and job skills.
 
 Candidate Skills: ${candidateSkills.join(",")}
 Job Skills: ${jobSkills.join(",")}
 
-Return ONLY comma separated RELATED skills from candidate matching job context.
-Example: react,nodejs,typescript
+IMPORTANT:
+
+- Include similar or equivalent technologies.
+- Example: reactjs -> react, node -> nodejs.
+
+Return ONLY comma separated skills.
+Example:
+react,nodejs,typescript
 `;
 
-  const aiResult = await askAI(semanticPrompt);
+    const aiResult = await askAI(semanticPrompt);
 
-  let semanticMatches = [];
+    let semanticMatches = [];
 
-  if (aiResult) {
-    semanticMatches = aiResult
-      .toLowerCase()
-      .split(",")
-      .map(s => s.trim());
-  }
+    if (aiResult) {
 
-  const uniqueSemanticMatches = semanticMatches.filter(skill =>
-    jobSkills.includes(skill)
-  );
+      semanticMatches = aiResult
+        .toLowerCase()
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
 
-  if (jobSkills.length > 0) {
+    }
 
-    const semanticScore = (uniqueSemanticMatches.length / jobSkills.length) * 30;
+    // Remove duplicates
+    const uniqueSemanticMatches = [...new Set(semanticMatches)];
+
+    semanticScore = (uniqueSemanticMatches.length / jobSkills.length) * 30;
 
     score += semanticScore;
 
   }
 
-
-
+ 
   const candidateExperience = candidate.experienceYears || 0;
   const requiredExperience = job.minExperienceYears || 0;
 
-  if (candidateExperience >= requiredExperience) {
+  if (requiredExperience === 0) {
+
+    // Fresher role
+    score += 25;
+
+  } else if (candidateExperience === 0) {
+
+
+    score += 12;
+
+  } else if (candidateExperience >= requiredExperience) {
 
     score += 25;
 
@@ -69,12 +91,15 @@ Example: react,nodejs,typescript
 
   }
 
- 
+
   if (candidate.projects && candidate.projects.length > 0) {
 
     score += 15;
 
   }
+
+ 
+  score = Math.min(score, 100);
 
   return Math.round(score);
 
