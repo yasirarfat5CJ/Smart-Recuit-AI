@@ -37,9 +37,17 @@ export const getSingleCandidateAPI = (id) => {
   return API.get(`/hr/candidate/${id}`);
 };
 
+export const getMyCandidateDashboardAPI = () => {
+  return API.get("/hr/candidate/me/dashboard");
+};
+
 
 export const getDashboardStatsAPI = () => {
   return API.get("/hr/dashboard-stats");
+};
+
+export const deleteCandidateAPI = (id) => {
+  return API.delete(`/hr/candidate/${id}`);
 };
 
 // Job APIs

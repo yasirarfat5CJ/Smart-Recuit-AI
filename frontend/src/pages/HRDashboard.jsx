@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getCandidateAPI, getDashboardStatsAPI } from "../services/api";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -10,35 +10,37 @@ export default function HRDashboard() {
   const [candidates, setCandidates] = useState([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
 
-    const fetchData = async () => {
+      const [statsRes, candidatesRes] = await Promise.all([
+        getDashboardStatsAPI(),
+        getCandidateAPI()
+      ]);
+      setStats(statsRes.data);
 
-      try {
-
-        const statsRes = await getDashboardStatsAPI();
-        setStats(statsRes.data);
-
-        const candidatesRes = await getCandidateAPI();
-
-        const sorted = candidatesRes.data.sort(
-          (a, b) => (b.totalScore + b.atsScore) - (a.totalScore + a.atsScore)
-        );
-
-        setCandidates(sorted);
-
-      } catch (error) {
-        console.log(error);
-      }
-
-    };
-
-    fetchData();
-
+      const sorted = candidatesRes.data.sort(
+        (a, b) => (b.totalScore + b.atsScore) - (a.totalScore + a.atsScore)
+      );
+      setCandidates(sorted);
+    } catch (err) {
+      console.log(err);
+      setError("Failed to load dashboard data. Please refresh.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const filteredCandidates = candidates.filter(c => {
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const filteredCandidates = useMemo(() => candidates.filter(c => {
 
     const matchSearch = c.name.toLowerCase().includes(search.toLowerCase());
 
@@ -47,7 +49,7 @@ export default function HRDashboard() {
 
     return matchSearch && matchFilter;
 
-  });
+  }), [candidates, filter, search]);
 
   return (
 
@@ -61,6 +63,12 @@ export default function HRDashboard() {
         </h1>
 
         <div className="flex gap-3">
+          <button
+            onClick={fetchData}
+            className="border px-4 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200"
+          >
+            Refresh
+          </button>
 
           <Link
             to="/hr/create-job"
@@ -100,7 +108,7 @@ export default function HRDashboard() {
       )}
 
       {/* FILTER BAR */}
-      <div className="flex gap-4 mb-6">
+      <div className="flex flex-col md:flex-row md:items-center gap-4 mb-6">
 
         <input
           placeholder="Search candidate..."
@@ -119,7 +127,17 @@ export default function HRDashboard() {
           <option>No Hire</option>
         </select>
 
+        <div className="text-sm text-gray-500 dark:text-gray-300 md:ml-auto">
+          Showing {filteredCandidates.length} candidate(s)
+        </div>
+
       </div>
+
+      {error ? (
+        <div className="mb-6 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-4 py-2 text-sm">
+          {error}
+        </div>
+      ) : null}
 
       {/* TABLE */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden">
@@ -128,61 +146,69 @@ export default function HRDashboard() {
           Candidate Rankings
         </h2>
 
-        <table className="w-full">
+        {loading ? (
+          <div className="p-6 text-sm text-gray-600 dark:text-gray-300">Loading candidates...</div>
+        ) : filteredCandidates.length === 0 ? (
+          <div className="p-6 text-sm text-gray-600 dark:text-gray-300">
+            No candidates match your current filters.
+          </div>
+        ) : (
+          <table className="w-full">
 
-          <thead className="bg-gray-100 dark:bg-gray-700">
+            <thead className="bg-gray-100 dark:bg-gray-700">
 
-            <tr>
-              <th className="p-4 text-left">Name</th>
-              <th className="p-4">ATS Score</th>
-              <th className="p-4">Interview Score</th>
-              <th className="p-4">Recommendation</th>
-            </tr>
+              <tr>
+                <th className="p-4 text-left">Name</th>
+                <th className="p-4">ATS Score</th>
+                <th className="p-4">Interview Score</th>
+                <th className="p-4">Recommendation</th>
+              </tr>
 
-          </thead>
+            </thead>
 
-          <tbody>
+            <tbody>
 
-            {filteredCandidates.map((c, index) => (
+              {filteredCandidates.map((c) => (
 
-              <tr
-                key={index}
-                className="border-t dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                onClick={() => navigate(`/hr/candidate/${c._id}`)}
-              >
+                <tr
+                  key={c._id}
+                  className="border-t dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition"
+                  onClick={() => navigate(`/hr/candidate/${c._id}`)}
+                >
 
-                <td className="p-4">{c.name}</td>
+                  <td className="p-4">{c.name}</td>
 
-                <td className="p-4 text-center text-blue-600 dark:text-blue-400 font-semibold">
-                  {c.atsScore}
-                </td>
+                  <td className="p-4 text-center text-blue-600 dark:text-blue-400 font-semibold">
+                    {c.atsScore}
+                  </td>
 
-                <td className="p-4 text-center text-purple-600 dark:text-purple-400 font-semibold">
-                  {c.totalScore}
-                </td>
+                  <td className="p-4 text-center text-purple-600 dark:text-purple-400 font-semibold">
+                    {c.totalScore}
+                  </td>
 
-                <td className="p-4 text-center">
+                  <td className="p-4 text-center">
 
-                  <span
-                    className={`px-3 py-1 rounded-full text-sm
+                    <span
+                      className={`px-3 py-1 rounded-full text-sm
                       ${
                         c.recommendation === "Hire"
                           ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
                           : "bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-300"
                       }`}
-                  >
-                    {c.recommendation}
-                  </span>
+                    >
+                      {c.recommendation}
+                    </span>
 
-                </td>
+                  </td>
 
-              </tr>
+                </tr>
 
-            ))}
+              ))}
 
-          </tbody>
+            </tbody>
 
-        </table>
+          </table>
+        )}
 
       </div>
 

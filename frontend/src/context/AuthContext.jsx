@@ -1,27 +1,11 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useState } from "react";
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
 
-  const [role, setRole] = useState(null);
-  const [userId, setUserId] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-
-    const savedToken = localStorage.getItem("token");
-    const savedRole = localStorage.getItem("role");
-    const savedUser = localStorage.getItem("userId");
-
-    if (savedToken && savedRole && savedUser) {
-      setRole(savedRole);
-      setUserId(savedUser);
-    }
-
-    setLoading(false);
-
-  }, []);
+  const [role, setRole] = useState(() => localStorage.getItem("role"));
+  const [userId, setUserId] = useState(() => localStorage.getItem("userId"));
 
   const login = (token, role, userId) => {
 
@@ -52,7 +36,7 @@ export const AuthProvider = ({ children }) => {
       userId,
       login,
       logout,
-      loading
+      loading: false
     }}>
 
       {children}
@@ -62,4 +46,4 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
-export const useAuth = () => useContext(AuthContext);
+export default AuthContext;

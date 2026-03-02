@@ -1,7 +1,7 @@
 import { useState } from "react";
 import API from "../services/api";
-import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/useAuth";
+import { Link, useNavigate } from "react-router-dom";
 
 export default function Login(){
 
@@ -14,6 +14,8 @@ export default function Login(){
   });
 
   const [error,setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleChange = (e)=>{
 
@@ -30,6 +32,7 @@ export default function Login(){
 
     try{
 
+      setLoading(true);
       setError("");
 
       const res = await API.post("/auth/login",form);
@@ -40,12 +43,20 @@ export default function Login(){
         res.data.userId
       );
 
-      navigate("/", { replace:true });
+      if (res.data.role === "candidate") {
+        navigate("/candidate", { replace:true });
+      } else if (res.data.role === "hr" || res.data.role === "admin") {
+        navigate("/hr", { replace:true });
+      } else {
+        navigate("/", { replace:true });
+      }
 
     }catch(err){
 
       console.log(err);
       setError("Credentials do not match");
+    } finally {
+      setLoading(false);
 
     }
 
@@ -91,7 +102,7 @@ export default function Login(){
         />
 
         <input
-          type="password"
+          type={showPassword ? "text" : "password"}
           name="password"
           placeholder="Password"
           onChange={handleChange}
@@ -102,14 +113,31 @@ export default function Login(){
                      outline-none"
         />
 
+        <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          <input
+            type="checkbox"
+            checked={showPassword}
+            onChange={(e) => setShowPassword(e.target.checked)}
+          />
+          Show password
+        </label>
+
         <button
+          disabled={loading}
           className="bg-green-600 dark:bg-green-500
                      hover:bg-green-700 dark:hover:bg-green-600
-                     text-white p-3 w-full rounded
+                     text-white p-3 w-full rounded disabled:opacity-70 disabled:cursor-not-allowed
                      transition-all duration-200"
         >
-          Login
+          {loading ? "Signing in..." : "Login"}
         </button>
+
+        <p className="text-sm text-gray-600 dark:text-gray-300 text-center">
+          New user?{" "}
+          <Link to="/register" className="text-blue-600 dark:text-blue-400 hover:underline">
+            Create an account
+          </Link>
+        </p>
 
       </form>
 

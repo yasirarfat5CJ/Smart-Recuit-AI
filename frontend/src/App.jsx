@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 
 import Navbar from "./components/Navbar";
 import ProtectedRoute from "./components/protectedRoute";
@@ -11,7 +11,6 @@ import Summary from "./pages/Summary";
 import HRDashboard from "./pages/HRDashboard";
 import CandidateDashboard from "./pages/CandidateDashboard";
 
-import Candidates from "./pages/Candidates";
 import CandidateProfile from "./pages/Candidates";   
 
 import CreateJob from "./pages/CreateJob";
@@ -68,7 +67,7 @@ function App() {
           path="/hr/candidates"
           element={
             <ProtectedRoute allowedRoles={["hr","admin"]}>
-              <Candidates />
+              <Navigate to="/hr" replace />
             </ProtectedRoute>
           }
         />
@@ -95,6 +94,14 @@ function App() {
 
         {/* CANDIDATE DASHBOARD */}
         <Route
+          path="/candidate"
+          element={
+            <ProtectedRoute allowedRoles={["candidate"]}>
+              <CandidateDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/candidate/:id"
           element={
             <ProtectedRoute allowedRoles={["candidate"]}>
@@ -104,7 +111,14 @@ function App() {
         />
         <Route path="/login" element={<Login />} />
          <Route path="/register" element={<Register />} />
-          <Route path="/hr/jobs" element={<Jobs />}/>
+          <Route
+            path="/hr/jobs"
+            element={
+              <ProtectedRoute allowedRoles={["hr","admin"]}>
+                <Jobs />
+              </ProtectedRoute>
+            }
+          />
           
       </Routes>
 

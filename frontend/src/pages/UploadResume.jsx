@@ -10,6 +10,8 @@ export default function UploadResume() {
   const [selectedJob, setSelectedJob] = useState("");
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [error, setError] = useState("");
 
   const [atsResult, setAtsResult] = useState(null);
   const [candidateId, setCandidateId] = useState(null);
@@ -36,7 +38,7 @@ export default function UploadResume() {
     e.preventDefault();
 
     if (!file || !selectedJob) {
-      alert("Please select job and upload resume");
+      setError("Please select a job role and upload a PDF resume.");
       return;
     }
 
@@ -47,6 +49,7 @@ export default function UploadResume() {
     try {
 
       setLoading(true);
+      setError("");
 
       const res = await UploadResumeAPI(formData);
 
@@ -56,7 +59,7 @@ export default function UploadResume() {
     } catch (error) {
 
       console.log(error);
-      alert("Upload failed");
+      setError("Upload failed. Please try again.");
 
     } finally {
 
@@ -66,16 +69,40 @@ export default function UploadResume() {
 
   };
 
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragActive(false);
+    const dropped = e.dataTransfer.files?.[0];
+    if (!dropped) return;
+    if (dropped.type !== "application/pdf") {
+      setError("Only PDF files are supported.");
+      return;
+    }
+    setError("");
+    setFile(dropped);
+  };
+
+  const handleFilePick = (e) => {
+    const picked = e.target.files?.[0];
+    if (!picked) return;
+    if (picked.type !== "application/pdf") {
+      setError("Only PDF files are supported.");
+      return;
+    }
+    setError("");
+    setFile(picked);
+  };
+
   return (
 
-    <div className="min-h-screen flex justify-center items-center
+    <div className="min-h-screen px-4 flex justify-center items-center
                     bg-gray-100 dark:bg-gray-900
                     text-gray-900 dark:text-white
                     transition-colors duration-300">
 
       <div className="bg-white dark:bg-gray-800
-                      p-8 rounded-xl shadow-lg
-                      w-full max-w-lg">
+                      p-8 rounded-2xl shadow-lg
+                      w-full max-w-2xl">
 
         <h2 className="text-3xl font-bold mb-6 text-center">
           Upload Resume
@@ -83,7 +110,7 @@ export default function UploadResume() {
 
         {!atsResult ? (
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
 
             <select
               className="w-full border dark:border-gray-600
@@ -103,52 +130,88 @@ export default function UploadResume() {
 
             </select>
 
+            <label
+              htmlFor="resume"
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragActive(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                setDragActive(false);
+              }}
+              onDrop={handleDrop}
+              className={`w-full block border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition ${
+                dragActive
+                  ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                  : "border-gray-300 dark:border-gray-600"
+              }`}
+            >
+              <div className="text-sm text-gray-600 dark:text-gray-300">
+                Drag & drop your resume PDF here or click to browse
+              </div>
+              {file ? (
+                <div className="mt-2 text-sm font-medium text-green-600 dark:text-green-400 break-all">
+                  Selected: {file.name}
+                </div>
+              ) : null}
+            </label>
+
             <input
+              id="resume"
               type="file"
               accept="application/pdf"
-              className="w-full border dark:border-gray-600
-                         p-3 rounded
-                         bg-white dark:bg-gray-700
-                         focus:ring-2 focus:ring-blue-500 outline-none"
-              onChange={(e) => setFile(e.target.files[0])}
+              className="hidden"
+              onChange={handleFilePick}
             />
+
+            {error ? (
+              <div className="text-sm rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-3 py-2">
+                {error}
+              </div>
+            ) : null}
 
             <button
               disabled={loading}
               className="bg-blue-600 dark:bg-blue-500
                          hover:bg-blue-700 dark:hover:bg-blue-600
-                         text-white w-full py-3 rounded
+                         text-white w-full py-3 rounded-lg
+                         disabled:opacity-70 disabled:cursor-not-allowed
                          transition-all duration-200"
             >
-              {loading ? "Analyzing..." : "Upload Resume"}
+              {loading ? "Analyzing Resume..." : "Upload Resume"}
             </button>
 
           </form>
 
         ) : (
 
-          <div className="text-center space-y-4">
+          <div className="text-center space-y-5">
 
             <h3 className="text-xl font-semibold">
               ATS Score
             </h3>
 
-            <div className="text-6xl font-bold text-green-500">
-              {atsResult}
+            <div className="mx-auto h-36 w-36 rounded-full bg-gradient-to-tr from-green-500 to-emerald-400 text-white grid place-items-center shadow-lg">
+              <div className="text-4xl font-bold">{atsResult}</div>
             </div>
+
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Resume parsed successfully. Continue with AI interview or open your dashboard.
+            </p>
 
             <div className="flex gap-4 justify-center mt-6">
 
               <button
                 onClick={() => navigate(`/interview/${candidateId}`)}
-                className="bg-green-600 text-white px-5 py-2 rounded hover:bg-green-700"
+                className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 transition"
               >
                 Start Interview
               </button>
 
               <button
                 onClick={() => navigate(`/candidate/${candidateId}`)}
-                className="bg-gray-700 dark:bg-gray-600 text-white px-5 py-2 rounded hover:bg-gray-800"
+                className="bg-gray-700 dark:bg-gray-600 text-white px-5 py-2 rounded-lg hover:bg-gray-800 transition"
               >
                 Go Dashboard
               </button>

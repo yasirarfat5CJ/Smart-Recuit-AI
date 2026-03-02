@@ -1,36 +1,51 @@
-import { Link, useLocation } from "react-router-dom";
-import { useState, useEffect } from "react";
-import { useAuth } from "../context/AuthContext";
+import { Link, useNavigate } from "react-router-dom";
+import { useMemo, useState, useEffect } from "react";
+import { useAuth } from "../context/useAuth";
 
 export default function Navbar() {
-
   const [open, setOpen] = useState(false);
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState(() => {
+    const stored = localStorage.getItem("theme");
+    if (stored) return stored === "dark";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
 
   const { role, userId, logout } = useAuth();
-  const location = useLocation();
+  const navigate = useNavigate();
 
   // Global Dark Mode
   useEffect(() => {
 
     if (dark) {
       document.documentElement.classList.add("dark");
+      localStorage.setItem("theme", "dark");
     } else {
       document.documentElement.classList.remove("dark");
+      localStorage.setItem("theme", "light");
     }
 
   }, [dark]);
 
-  useEffect(() => {
-    setOpen(false);
-  }, [location]);
-
   const isHR = role === "hr" || role === "admin";
+  const navItems = useMemo(() => {
+    const items = [{ to: "/", label: "Home" }];
+    if (role === "candidate") items.push({ to: "/candidate", label: "Dashboard" });
+    if (role === "candidate") items.push({ to: "/upload", label: "Upload Resume" });
+    if (isHR) items.push({ to: "/hr", label: "HR Dashboard" });
+    if (isHR) items.push({ to: "/hr/jobs", label: "Jobs" });
+    return items;
+  }, [isHR, role]);
+
+  const handleLogout = () => {
+    logout();
+    setOpen(false);
+    navigate("/login");
+  };
 
   return (
 
     <>
-      <nav className="fixed top-0 left-0 w-full z-50 bg-white dark:bg-black text-black dark:text-white px-6 py-4 shadow-md">
+      <nav className="fixed top-0 left-0 w-full z-50 border-b border-slate-200/70 dark:border-slate-700/70 bg-white/90 dark:bg-slate-950/90 backdrop-blur text-black dark:text-white px-6 py-4 shadow-sm">
 
         <div className="flex justify-between items-center">
 
@@ -40,29 +55,22 @@ export default function Navbar() {
 
           {/* DESKTOP MENU */}
           <div className="hidden md:flex gap-6 items-center">
-
-            <NavLink to="/">Home</NavLink>
-
-            {role === "candidate" && (
-              <NavLink to="/upload">Upload Resume</NavLink>
-            )}
-
-            {isHR && (
-              <NavLink to="/hr">HR Dashboard</NavLink>
-            )}
+            {navItems.map((item) => (
+              <NavLink key={item.to} to={item.to} onClick={() => setOpen(false)}>
+                {item.label}
+              </NavLink>
+            ))}
 
             {!userId ? (
               <>
-                <NavLink to="/login">Login</NavLink>
-                <NavLink to="/register">Register</NavLink>
+                <NavLink to="/login" onClick={() => setOpen(false)}>Login</NavLink>
+                <NavLink to="/register" onClick={() => setOpen(false)}>Register</NavLink>
               </>
             ) : (
               <>
-                <NavLink to="/hr/jobs">Jobs</NavLink>
-
                 <button
-                  onClick={logout}
-                  className="bg-red-500 px-3 py-1 rounded hover:bg-red-600"
+                  onClick={handleLogout}
+                  className="bg-red-500 px-3 py-1 rounded hover:bg-red-600 text-white"
                 >
                   Logout
                 </button>
@@ -72,9 +80,9 @@ export default function Navbar() {
             {/* DARK MODE TOGGLE */}
             <button
               onClick={() => setDark(!dark)}
-              className="border px-3 py-1 rounded"
+              className="border border-slate-300 dark:border-slate-600 px-3 py-1 rounded"
             >
-              {dark ? "☀️" : "🌙"}
+              {dark ? "Light" : "Dark"}
             </button>
 
           </div>
@@ -82,10 +90,10 @@ export default function Navbar() {
           {/* MOBILE BUTTON */}
           <button
             className="md:hidden text-xl"
-            onClick={() => setOpen(!open)}
-          >
-            ☰
-          </button>
+          onClick={() => setOpen((prev) => !prev)}
+        >
+          ☰
+        </button>
 
         </div>
 
@@ -94,7 +102,7 @@ export default function Navbar() {
       {/* BACKDROP */}
       {open && (
         <div
-          className="fixed inset-0 z-40 md:hidden"
+          className="fixed inset-0 z-40 md:hidden bg-black/20"
           onClick={() => setOpen(false)}
         />
       )}
@@ -118,33 +126,32 @@ export default function Navbar() {
         `}
       >
 
-        <NavLink to="/">Home</NavLink>
-
-        <NavLink to="/hr/jobs">Jobs</NavLink>
-
-        {role === "candidate" && (
-          <NavLink to="/upload">Upload Resume</NavLink>
-        )}
-
-        {isHR && (
-          <NavLink to="/hr">HR Dashboard</NavLink>
-        )}
+        {navItems.map((item) => (
+          <NavLink key={item.to} to={item.to} onClick={() => setOpen(false)}>
+            {item.label}
+          </NavLink>
+        ))}
 
         {!userId ? (
           <>
-            <NavLink to="/login">Login</NavLink>
-            <NavLink to="/register">Register</NavLink>
+            <NavLink to="/login" onClick={() => setOpen(false)}>Login</NavLink>
+            <NavLink to="/register" onClick={() => setOpen(false)}>Register</NavLink>
           </>
         ) : (
-          <button onClick={logout}>Logout</button>
+          <button
+            onClick={handleLogout}
+            className="bg-red-500 text-white px-3 py-2 rounded"
+          >
+            Logout
+          </button>
         )}
 
         {/* ⭐ DARK MODE TOGGLE ADDED TO MOBILE */}
         <button
           onClick={() => setDark(!dark)}
-          className="border px-3 py-1 rounded"
+          className="border border-slate-300 dark:border-slate-600 px-3 py-1 rounded"
         >
-          {dark ? "☀️ Dark" : "🌙 Light"}
+          {dark ? "Light Mode" : "Dark Mode"}
         </button>
 
       </div>
@@ -153,12 +160,13 @@ export default function Navbar() {
   );
 }
 
-function NavLink({ to, children }) {
+function NavLink({ to, children, onClick }) {
 
   return (
     <Link
       to={to}
-      className="transition text-black dark:text-red-500 hover:text-blue-500 dark:hover:text-red-400"
+      onClick={onClick}
+      className="transition text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400"
     >
       {children}
     </Link>

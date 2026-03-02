@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getJobsAPI, deleteJobAPI, updateJobAPI } from "../services/api";
 
 export default function Jobs(){
@@ -6,27 +6,29 @@ export default function Jobs(){
   const [jobs,setJobs] = useState([]);
   const [editingId,setEditingId] = useState(null);
   const [editData,setEditData] = useState({});
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const fetchJobs = useCallback(async()=>{
+    try{
+      setLoading(true);
+      setError("");
+      const res = await getJobsAPI();
+      setJobs(res.data);
+    }catch(err){
+      console.log(err);
+      setError("Failed to load jobs.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(()=>{
-
-    const fetchJobs = async()=>{
-
-      try{
-
-        const res = await getJobsAPI();
-        setJobs(res.data);
-
-      }catch(err){
-
-        console.log(err);
-
-      }
-
-    };
-
     fetchJobs();
-
-  },[]);
+  },[fetchJobs]);
 
   // DELETE
   const handleDelete = async(id)=>{
@@ -34,14 +36,18 @@ export default function Jobs(){
     if(!window.confirm("Delete this job?")) return;
 
     try{
+      setMessage("");
+      setError("");
 
       await deleteJobAPI(id);
 
-      setJobs(jobs.filter(job => job._id !== id));
+      setJobs(prev => prev.filter(job => job._id !== id));
+      setMessage("Job deleted successfully.");
 
     }catch(err){
 
       console.log(err);
+      setError("Failed to delete job.");
 
     }
 
@@ -66,28 +72,43 @@ export default function Jobs(){
   const saveEdit = async(id)=>{
 
     try{
+      setSaving(true);
+      setError("");
+      setMessage("");
 
       const payload = {
 
         ...editData,
-        requiredSkills: editData.requiredSkills.split(","),
-        techStack: editData.techStack.split(",")
+        requiredSkills: editData.requiredSkills.split(",").map((v) => v.trim()).filter(Boolean),
+        techStack: editData.techStack.split(",").map((v) => v.trim()).filter(Boolean)
 
       };
 
       const res = await updateJobAPI(id,payload);
 
-      setJobs(jobs.map(j => j._id === id ? res.data : j));
+      setJobs(prev => prev.map(j => j._id === id ? res.data : j));
 
       setEditingId(null);
+      setMessage("Job updated successfully.");
 
     }catch(err){
 
       console.log(err);
+      setError("Failed to update job.");
+    } finally {
+      setSaving(false);
 
     }
 
   };
+
+  const filteredJobs = useMemo(() => jobs.filter((job) => {
+    const q = search.toLowerCase();
+    return (
+      job.title?.toLowerCase().includes(q) ||
+      job.description?.toLowerCase().includes(q)
+    );
+  }), [jobs, search]);
 
   return(
 
@@ -100,8 +121,37 @@ export default function Jobs(){
         Job Management
       </h1>
 
+      <div className="flex flex-col md:flex-row gap-3 mb-6">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by title or description..."
+          className="border dark:border-gray-700 bg-white dark:bg-gray-800 p-2 rounded md:w-96"
+        />
+        <button
+          onClick={fetchJobs}
+          className="border px-4 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition w-fit"
+        >
+          Refresh
+        </button>
+        <span className="text-sm text-gray-500 dark:text-gray-300 md:ml-auto self-center">
+          Showing {filteredJobs.length} of {jobs.length}
+        </span>
+      </div>
+
+      {error ? (
+        <div className="mb-4 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-3 py-2 text-sm">{error}</div>
+      ) : null}
+      {message ? (
+        <div className="mb-4 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-3 py-2 text-sm">{message}</div>
+      ) : null}
+
       {/* ✅ EMPTY STATE UI */}
-      {jobs.length === 0 ? (
+      {loading ? (
+        <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow text-sm text-gray-600 dark:text-gray-300">
+          Loading jobs...
+        </div>
+      ) : filteredJobs.length === 0 ? (
 
         <div className="flex justify-center items-center mt-20">
 
@@ -113,7 +163,7 @@ export default function Jobs(){
             </h2>
 
             <p className="text-gray-500 dark:text-gray-300">
-              No job postings found. Create a new job to get started.
+              No matching job postings found. Adjust search or create a new job.
             </p>
 
           </div>
@@ -124,7 +174,7 @@ export default function Jobs(){
 
         <div className="grid md:grid-cols-3 gap-6">
 
-          {jobs.map((job)=> (
+          {filteredJobs.map((job)=> (
 
             <div
               key={job._id}
@@ -179,9 +229,10 @@ export default function Jobs(){
 
                   <button
                     onClick={()=>saveEdit(job._id)}
-                    className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700"
+                    disabled={saving}
+                    className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 disabled:opacity-70 disabled:cursor-not-allowed"
                   >
-                    Save
+                    {saving ? "Saving..." : "Save"}
                   </button>
 
                 ) : (

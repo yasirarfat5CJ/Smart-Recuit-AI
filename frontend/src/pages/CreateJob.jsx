@@ -10,6 +10,9 @@ export default function CreateJob(){
     techStack:"",
     minExperienceYears:0
   });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   const handleChange = (e)=>{
 
@@ -24,23 +27,40 @@ export default function CreateJob(){
 
     e.preventDefault();
 
+    if (!form.title.trim()) {
+      setError("Job title is required.");
+      return;
+    }
+
     try{
+      setLoading(true);
+      setError("");
+      setSuccess("");
 
       const payload = {
 
         ...form,
-        requiredSkills: form.requiredSkills.split(","),
-        techStack: form.techStack.split(",")
+        requiredSkills: form.requiredSkills.split(",").map((v) => v.trim()).filter(Boolean),
+        techStack: form.techStack.split(",").map((v) => v.trim()).filter(Boolean)
 
       };
 
       await createJobAPI(payload);
-
-      alert("Job Created Successfully");
+      setSuccess("Job created successfully.");
+      setForm({
+        title:"",
+        description:"",
+        requiredSkills:"",
+        techStack:"",
+        minExperienceYears:0
+      });
 
     }catch(err){
 
       console.log(err);
+      setError("Failed to create job. Please try again.");
+    } finally {
+      setLoading(false);
 
     }
 
@@ -69,28 +89,43 @@ export default function CreateJob(){
                      space-y-5 transition-all"
         >
 
-          <Input name="title" placeholder="Job Title" handleChange={handleChange} />
+          {error ? (
+            <div className="rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-3 py-2 text-sm">
+              {error}
+            </div>
+          ) : null}
 
-          <Textarea name="description" placeholder="Description" handleChange={handleChange} />
+          {success ? (
+            <div className="rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-3 py-2 text-sm">
+              {success}
+            </div>
+          ) : null}
 
-          <Input name="requiredSkills" placeholder="Skills (comma separated)" handleChange={handleChange} />
+          <Input name="title" value={form.title} placeholder="Job Title" handleChange={handleChange} />
 
-          <Input name="techStack" placeholder="Tech Stack (comma separated)" handleChange={handleChange} />
+          <Textarea name="description" value={form.description} placeholder="Description" handleChange={handleChange} />
+
+          <Input name="requiredSkills" value={form.requiredSkills} placeholder="Skills (comma separated)" handleChange={handleChange} />
+
+          <Input name="techStack" value={form.techStack} placeholder="Tech Stack (comma separated)" handleChange={handleChange} />
 
           <Input
             type="number"
             name="minExperienceYears"
+            value={form.minExperienceYears}
             placeholder="Minimum Experience"
             handleChange={handleChange}
           />
 
           <button
+            disabled={loading}
             className="w-full bg-blue-600 dark:bg-blue-500
                        text-white px-4 py-3 rounded-lg
                        hover:bg-blue-700 dark:hover:bg-blue-600
+                       disabled:opacity-70 disabled:cursor-not-allowed
                        transition-all duration-200 font-semibold"
           >
-            Create Job
+            {loading ? "Creating..." : "Create Job"}
           </button>
 
         </form>
@@ -106,13 +141,14 @@ export default function CreateJob(){
 
 /* ---------- REUSABLE INPUT COMPONENT ---------- */
 
-function Input({ name, placeholder, handleChange, type="text" }) {
+function Input({ name, value, placeholder, handleChange, type="text" }) {
 
   return(
 
     <input
       type={type}
       name={name}
+      value={value}
       placeholder={placeholder}
       className="border dark:border-gray-600
                  bg-white dark:bg-gray-700
@@ -126,12 +162,13 @@ function Input({ name, placeholder, handleChange, type="text" }) {
 
 }
 
-function Textarea({ name, placeholder, handleChange }) {
+function Textarea({ name, value, placeholder, handleChange }) {
 
   return(
 
     <textarea
       name={name}
+      value={value}
       placeholder={placeholder}
       className="border dark:border-gray-600
                  bg-white dark:bg-gray-700

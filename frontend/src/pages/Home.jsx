@@ -1,13 +1,19 @@
 import { Link } from "react-router-dom";
+import { useAuth } from "../context/useAuth";
 
 export default function Home(){
+  const { role } = useAuth();
 
   return (
 
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white transition-colors duration-300">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-blue-50 dark:from-gray-900 dark:to-gray-900 text-gray-900 dark:text-white transition-colors duration-300">
 
       {/* HERO SECTION */}
-      <section className="text-center px-6 py-20">
+      <section className="text-center px-6 pt-28 pb-16">
+
+        <p className="inline-block mb-4 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs px-3 py-1">
+          AI-first hiring workflow
+        </p>
 
         <h1 className="text-4xl md:text-6xl font-bold mb-6 leading-tight">
           Smart AI Recruitment Platform
@@ -21,18 +27,20 @@ export default function Home(){
         {/* BUTTONS */}
         <div className="flex flex-col sm:flex-row justify-center gap-4 mt-10">
 
-          <Link
-            to="/upload"
-            className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg transition"
-          >
-            Upload Resume
-          </Link>
+          {role !== "hr" && role !== "admin" ? (
+            <Link
+              to="/upload"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg transition shadow-sm"
+            >
+              Upload Resume
+            </Link>
+          ) : null}
 
           <Link
-            to="/hr"
-            className="bg-gray-900 dark:bg-white text-white dark:text-black hover:bg-black dark:hover:bg-gray-200 px-8 py-3 rounded-lg transition"
+            to={role === "hr" || role === "admin" ? "/hr" : "/login"}
+            className="bg-gray-900 dark:bg-white text-white dark:text-black hover:bg-black dark:hover:bg-gray-200 px-8 py-3 rounded-lg transition shadow-sm"
           >
-            HR Dashboard
+            {role === "hr" || role === "admin" ? "Open HR Dashboard" : "Login to Continue"}
           </Link>
 
         </div>
@@ -81,7 +89,7 @@ function FeatureCard({ title, desc }) {
 
   return (
 
-    <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-xl shadow-sm p-6 hover:shadow-lg transition duration-300">
+    <div className="bg-white/95 dark:bg-gray-800 text-gray-900 dark:text-white rounded-xl shadow-sm p-6 hover:shadow-lg hover:-translate-y-1 transition duration-300">
 
       <h3 className="font-semibold text-lg mb-2">
         {title}

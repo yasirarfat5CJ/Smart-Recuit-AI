@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import socket from "../services/socket";
 
@@ -10,10 +10,16 @@ export default function Interview() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [started, setStarted] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [connectionState, setConnectionState] = useState("disconnected");
+  const [error, setError] = useState("");
+  const messagesEndRef = useRef(null);
 
   // START INTERVIEW
   const startInterview = () => {
-
+    setError("");
+    setConnectionState("connecting");
+    setProcessing(true);
     socket.connect();
     socket.emit("startInterview", { candidateId });
 
@@ -22,9 +28,23 @@ export default function Interview() {
 
   // SOCKET EVENTS
   useEffect(() => {
+    const onConnect = () => {
+      setConnectionState("connected");
+    };
+
+    const onDisconnect = () => {
+      setConnectionState("disconnected");
+    };
+
+    const onConnectError = () => {
+      setConnectionState("disconnected");
+      setStarted(false);
+      setProcessing(false);
+      setError("Connection failed. Please login again and retry.");
+    };
 
     socket.on("aiQuestion", (question) => {
-
+      setProcessing(false);
       setMessages(prev => [
         ...prev,
         { sender: "ai", text: question }
@@ -33,7 +53,7 @@ export default function Interview() {
     });
 
     socket.on("aiEvaluation", (data) => {
-
+      setProcessing(false);
       setMessages(prev => [
         ...prev,
         { sender: "ai", text: `Feedback: ${data.feedback}` },
@@ -43,55 +63,90 @@ export default function Interview() {
     });
 
     socket.on("finalSummary", (summary) => {
+      setProcessing(false);
 
-      navigate("/summary", { state: { summary } });
+      navigate("/summary", { state: { summary, candidateId } });
 
     });
+
+    socket.on("error", (msg) => {
+      setProcessing(false);
+      setError(typeof msg === "string" ? msg : "Something went wrong.");
+    });
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("connect_error", onConnectError);
 
     return () => {
 
       socket.off("aiQuestion");
       socket.off("aiEvaluation");
       socket.off("finalSummary");
+      socket.off("error");
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("connect_error", onConnectError);
 
       socket.disconnect();
 
     };
 
-  }, [candidateId]);
+  }, [candidateId, navigate]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, processing]);
 
   // SEND MESSAGE
   const sendMessage = () => {
 
-    if (!input) return;
+    if (!input.trim() || processing) return;
 
     setMessages(prev => [
       ...prev,
-      { sender: "user", text: input }
+      { sender: "user", text: input.trim() }
     ]);
 
-    socket.emit("candidateAnswer", { answer: input });
+    setProcessing(true);
+    socket.emit("candidateAnswer", { answer: input.trim() });
 
     setInput("");
   };
 
   return (
 
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white p-6 transition-colors duration-300">
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white p-4 md:p-6 transition-colors duration-300">
 
       {/* HEADER */}
       <div className="flex justify-between items-center mb-6">
 
-        <h1 className="text-3xl font-bold">
+        <h1 className="text-2xl md:text-3xl font-bold">
           AI Technical Interview
         </h1>
 
+        <div className={`text-xs px-3 py-1 rounded-full ${
+          connectionState === "connected"
+            ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
+            : connectionState === "connecting"
+              ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300"
+              : "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
+        }`}>
+          {connectionState}
+        </div>
+
       </div>
 
-      <div className="grid grid-cols-4 gap-6">
+      {error ? (
+        <div className="mb-4 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-4 py-2 text-sm">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="grid md:grid-cols-4 gap-6">
 
         {/* LEFT SIDEBAR */}
-        <div className="col-span-1 p-4 rounded shadow bg-white dark:bg-gray-800">
+        <div className="md:col-span-1 p-4 rounded shadow bg-white dark:bg-gray-800">
 
           <h2 className="font-bold mb-4">Interview Info</h2>
 
@@ -102,9 +157,10 @@ export default function Interview() {
 
             <button
               onClick={startInterview}
-              className="mt-4 bg-green-600 text-white px-4 py-2 rounded w-full hover:bg-green-700"
+              className="mt-4 bg-green-600 text-white px-4 py-2 rounded w-full hover:bg-green-700 transition disabled:opacity-70"
+              disabled={connectionState === "connecting"}
             >
-              Start Interview
+              {connectionState === "connecting" ? "Starting..." : "Start Interview"}
             </button>
 
           )}
@@ -112,7 +168,7 @@ export default function Interview() {
         </div>
 
         {/* CHAT SECTION */}
-        <div className="col-span-3 p-4 rounded shadow flex flex-col bg-white dark:bg-gray-800">
+        <div className="md:col-span-3 p-4 rounded shadow flex flex-col bg-white dark:bg-gray-800">
 
           <div className="flex-1 overflow-y-auto h-[450px]">
 
@@ -138,6 +194,16 @@ export default function Interview() {
 
             ))}
 
+            {processing ? (
+              <div className="mb-3">
+                <span className="inline-block px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-sm">
+                  AI is thinking...
+                </span>
+              </div>
+            ) : null}
+
+            <div ref={messagesEndRef} />
+
           </div>
 
           {started && (
@@ -147,6 +213,9 @@ export default function Interview() {
               <input
                 value={input}
                 onChange={(e)=>setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") sendMessage();
+                }}
                 className="flex-1 border dark:border-gray-600 p-2 rounded
                            bg-white dark:bg-gray-700
                            text-gray-900 dark:text-white"
@@ -155,14 +224,19 @@ export default function Interview() {
 
               <button
                 onClick={sendMessage}
-                className="bg-blue-600 text-white px-4 rounded hover:bg-blue-700"
+                disabled={processing || !input.trim()}
+                className="bg-blue-600 text-white px-4 rounded hover:bg-blue-700 transition disabled:opacity-70 disabled:cursor-not-allowed"
               >
                 Send
               </button>
 
               <button
-                onClick={() => socket.emit("endInterview")}
-                className="bg-red-500 text-white px-4 rounded hover:bg-red-600"
+                onClick={() => {
+                  setProcessing(true);
+                  socket.emit("endInterview");
+                }}
+                disabled={processing || messages.length === 0}
+                className="bg-red-500 text-white px-4 rounded hover:bg-red-600 transition disabled:opacity-70 disabled:cursor-not-allowed"
               >
                 End
               </button>
