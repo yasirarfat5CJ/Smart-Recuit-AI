@@ -37,17 +37,17 @@ export default function CandidateProfile(){
 
   const handleDeleteCandidate = async () => {
     if (!canManageCandidate) return;
-    if (!window.confirm("Delete this candidate and all interview records?")) return;
+    if (!window.confirm("Remove this candidate from HR ranking? Candidate data stays visible to the candidate.")) return;
 
     try {
       setDeleting(true);
       setActionMessage("");
       const res = await deleteCandidateAPI(id);
-      setActionMessage(res.data?.message || "Candidate deleted.");
+      setActionMessage(res.data?.message || "Candidate removed from ranking.");
       navigate("/hr");
     } catch (err) {
       console.log(err);
-      setActionMessage("Failed to delete candidate.");
+      setActionMessage("Failed to remove candidate from ranking.");
     } finally {
       setDeleting(false);
     }
@@ -78,7 +78,7 @@ export default function CandidateProfile(){
             disabled={deleting}
             className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            {deleting ? "Deleting..." : "Delete Candidate"}
+            {deleting ? "Removing..." : "Remove From Ranking"}
           </button>
           {actionMessage ? (
             <span className="text-sm text-gray-700 dark:text-gray-300">{actionMessage}</span>

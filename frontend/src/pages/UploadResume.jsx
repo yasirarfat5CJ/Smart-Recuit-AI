@@ -12,6 +12,7 @@ export default function UploadResume() {
   const [loading, setLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
 
   const [atsResult, setAtsResult] = useState(null);
   const [candidateId, setCandidateId] = useState(null);
@@ -50,16 +51,23 @@ export default function UploadResume() {
 
       setLoading(true);
       setError("");
+      setWarning("");
 
       const res = await UploadResumeAPI(formData);
 
       setAtsResult(res.data.candidate.atsScore);
       setCandidateId(res.data.candidate._id);
+      if (res.data.fallbackUsed) {
+        setWarning("Resume uploaded, but AI parsing was partially unavailable. You can still continue.");
+      }
 
     } catch (error) {
 
       console.log(error);
-      setError("Upload failed. Please try again.");
+      setError(
+        error?.response?.data?.message ||
+        "Upload failed. Please try again."
+      );
 
     } finally {
 
@@ -168,6 +176,12 @@ export default function UploadResume() {
             {error ? (
               <div className="text-sm rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-3 py-2">
                 {error}
+              </div>
+            ) : null}
+
+            {warning ? (
+              <div className="text-sm rounded-lg bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 px-3 py-2">
+                {warning}
               </div>
             ) : null}
 

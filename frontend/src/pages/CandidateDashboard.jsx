@@ -52,10 +52,10 @@ export default function CandidateDashboard(){
 
   },[id]);
 
-  if(loading) return <div className="p-8">Loading...</div>;
+  if(loading) return <div className="pt-24 p-8">Loading...</div>;
   if(!candidate) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white p-8">
+      <div className="min-h-screen pt-24 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white p-8">
         <div className="max-w-xl bg-white dark:bg-gray-800 p-6 rounded-xl shadow">
           <h2 className="text-xl font-semibold mb-2">Candidate Dashboard</h2>
           <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
@@ -77,7 +77,7 @@ export default function CandidateDashboard(){
 
   return(
 
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white p-8">
+    <div className="min-h-screen pt-24 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white p-8">
 
       <h1 className="text-3xl font-bold mb-8">
         Candidate Dashboard
