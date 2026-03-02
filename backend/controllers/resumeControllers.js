@@ -24,39 +24,73 @@ const uploadResume = async (req, res) => {
     }
 
     const filePath = req.file.path;
-
-    // Step 1 — AI structured parsing
-    const structuredResume = await parseResume(filePath);
-
-    console.log("RAW AI RESPONSE:\n", structuredResume);
-
+    let fallbackUsed = false;
     let parsedJson;
 
-    // Step 2 — Safe JSON parsing
+    const fallbackParsedJson = {
+      name: req.user?.name || "",
+      skills: [],
+      experience: [],
+      projects: [],
+      education: [],
+      techStack: [],
+      experienceYears: 0
+    };
+
     try {
+      // Step 1 — AI structured parsing
+      const structuredResume = await parseResume(filePath);
 
-      const cleanJsonString = structuredResume
-        .replace(/```json/g, "")
-        .replace(/```/g, "")
-        .trim();
+      console.log("RAW AI RESPONSE:\n", structuredResume);
 
-      parsedJson = JSON.parse(cleanJsonString);
+      // Step 2 — Safe JSON parsing
+      try {
 
-    } catch (err) {
+        const cleanJsonString = structuredResume
+          .replace(/```json/g, "")
+          .replace(/```/g, "")
+          .trim();
 
-      console.log("Direct parse failed. Trying extraction...");
+        parsedJson = JSON.parse(cleanJsonString);
 
-      const jsonMatch = structuredResume.match(/\{[\s\S]*\}/);
+      } catch (err) {
 
-      if (!jsonMatch) {
-        throw new Error("No valid JSON found in AI response");
+        console.log("Direct parse failed. Trying extraction...");
+
+        const jsonMatch = String(structuredResume || "").match(/\{[\s\S]*\}/);
+
+        if (!jsonMatch) {
+          throw new Error("No valid JSON found in AI response");
+        }
+
+        parsedJson = JSON.parse(jsonMatch[0]);
       }
+    } catch (parseError) {
+      console.log("Resume AI parse fallback used:", parseError.message);
+      parsedJson = fallbackParsedJson;
+      fallbackUsed = true;
+    }
 
-      parsedJson = JSON.parse(jsonMatch[0]);
+    if (!parsedJson || typeof parsedJson !== "object") {
+      parsedJson = fallbackParsedJson;
+      fallbackUsed = true;
+    }
+
+    if (!Array.isArray(parsedJson.skills)) parsedJson.skills = [];
+    if (!Array.isArray(parsedJson.experience)) parsedJson.experience = [];
+    if (!Array.isArray(parsedJson.projects)) parsedJson.projects = [];
+    if (!Array.isArray(parsedJson.education)) parsedJson.education = [];
+    if (!Array.isArray(parsedJson.techStack)) {
+      parsedJson.techStack = Array.isArray(parsedJson.tech_stack) ? parsedJson.tech_stack : [];
     }
 
     // Step 3 — Calculate ATS score
-    const atsScore =await calculateATSScore(parsedJson, job);
+    let atsScore = 0;
+    try {
+      atsScore = await calculateATSScore(parsedJson, job);
+    } catch (scoreError) {
+      console.log("ATS score fallback used:", scoreError.message);
+    }
 
     // Step 4 — Save candidate
     const candidate = await Candidate.create({
@@ -69,7 +103,8 @@ const uploadResume = async (req, res) => {
 
     res.json({
       message: "Candidate saved successfully",
-      candidate
+      candidate,
+      fallbackUsed
     });
 
   } catch (error) {

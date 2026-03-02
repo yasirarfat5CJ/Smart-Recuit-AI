@@ -13,6 +13,14 @@ module.exports = (io) => {
     overallRating: 0
   });
 
+  const buildFallbackQuestion = () =>
+    "Tell me about one project you built recently and explain the technical decisions you made.";
+
+  const buildFallbackEvaluation = () => ({
+    feedback: "Thanks for your answer. Let’s continue to the next question.",
+    nextQuestion: "Can you explain a challenging bug you fixed and how you debugged it?"
+  });
+
   const parseJsonFromResponse = (raw) => {
     if (typeof raw !== "string" || !raw.trim()) {
       throw new Error("Empty AI response");
@@ -23,13 +31,26 @@ module.exports = (io) => {
       .replace(/```/g, "")
       .trim();
 
-    const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+    try {
+      return JSON.parse(cleanJson);
+    } catch (fullParseError) {
+      const matches = cleanJson.match(/\{[\s\S]*?\}/g) || [];
 
-    if (!jsonMatch) {
-      throw new Error("No JSON object found");
+      for (const fragment of matches) {
+        try {
+          return JSON.parse(fragment);
+        } catch (fragmentError) {
+          // try next fragment
+        }
+      }
+
+      const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+
+      throw fullParseError;
     }
-
-    return JSON.parse(jsonMatch[0]);
   };
 
   const normalizeRecommendation = (value) => {
@@ -133,7 +154,16 @@ ${JSON.stringify(candidate.parsedResume.skills)}
           }
         ];
 
-        const firstQuestion = await askAI(messages);
+        let firstQuestion = buildFallbackQuestion();
+
+        try {
+          const aiFirstQuestion = await askAI(messages);
+          if (typeof aiFirstQuestion === "string" && aiFirstQuestion.trim()) {
+            firstQuestion = aiFirstQuestion.trim();
+          }
+        } catch (aiError) {
+          console.log("Start Interview AI fallback used:", aiError.message);
+        }
 
         askedQuestions.add(firstQuestion);
 
@@ -197,22 +227,20 @@ Return ONLY valid JSON:
           }
         ];
 
-        const aiResponse = await askAI(evaluationPrompt);
+        let evaluation = buildFallbackEvaluation();
 
-        console.log("AI RAW RESPONSE:", aiResponse);
+        try {
+          const aiResponse = await askAI(evaluationPrompt);
+          console.log("AI RAW RESPONSE:", aiResponse);
+          const parsedEvaluation = parseJsonFromResponse(aiResponse);
 
-        const cleanJson = aiResponse
-          .replace(/```json/g, "")
-          .replace(/```/g, "")
-          .trim();
-
-        const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
-
-        if (!jsonMatch) {
-          throw new Error("Invalid AI JSON response");
+          evaluation = {
+            feedback: parsedEvaluation.feedback || evaluation.feedback,
+            nextQuestion: parsedEvaluation.nextQuestion || evaluation.nextQuestion
+          };
+        } catch (aiError) {
+          console.log("Evaluation AI fallback used:", aiError.message);
         }
-
-        const evaluation = JSON.parse(jsonMatch[0]);
 
         // ⭐ Prevent repeated questions (backend safety)
         if (askedQuestions.has(evaluation.nextQuestion)) {
@@ -280,17 +308,54 @@ Return ONLY valid JSON:
         let finalSummary = buildFallbackSummary();
 
         try {
-          const aiResponse = await askAI(summaryPrompt);
-          const parsedSummary = parseJsonFromResponse(aiResponse);
+          let parsedSummary;
+
+          try {
+            const aiResponse = await askAI(summaryPrompt);
+            parsedSummary = parseJsonFromResponse(aiResponse);
+          } catch (primarySummaryError) {
+            console.log("Primary summary failed, retrying compact prompt:", primarySummaryError.message);
+
+            const compactPrompt = `
+You are a senior technical interviewer.
+Return ONLY valid JSON with exactly these keys:
+{
+  "strengths": "",
+  "weaknesses": "",
+  "overallFeedback": "",
+  "recommendation": "Hire or No Hire",
+  "overallRating": 0
+}
+
+Interview transcript:
+${messages.slice(-12).map((m) => `${m.role}: ${m.content}`).join("\n")}
+`;
+
+            const retryResponse = await askAI(compactPrompt);
+            parsedSummary = parseJsonFromResponse(retryResponse);
+          }
+
           const rating = Number(parsedSummary.overallRating);
+          const normalizedRecommendation = normalizeRecommendation(parsedSummary.recommendation);
+          const normalizedRating = Number.isFinite(rating) ? Math.max(0, Math.min(10, rating)) : 0;
+          const totalScore = Math.round(normalizedRating * 10);
+          const questionCount = messages.filter((m) => m.role === "assistant").length;
 
           finalSummary = {
             strengths: parsedSummary.strengths || finalSummary.strengths,
             weaknesses: parsedSummary.weaknesses || finalSummary.weaknesses,
             overallFeedback: parsedSummary.overallFeedback || finalSummary.overallFeedback,
-            recommendation: normalizeRecommendation(parsedSummary.recommendation),
-            overallRating: Number.isFinite(rating) ? rating : 0
+            recommendation: normalizedRecommendation,
+            overallRating: normalizedRating
           };
+
+          await InterviewSession.findByIdAndUpdate(sessionId, {
+            finalSummary,
+            totalScore,
+            questionCount
+          });
+
+          return socket.emit("finalSummary", finalSummary);
         } catch (summaryErr) {
           console.log("Summary Parse Error:", summaryErr.message);
         }

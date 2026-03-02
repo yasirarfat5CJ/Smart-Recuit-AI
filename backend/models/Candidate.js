@@ -28,6 +28,14 @@ const candidateSchema=new mongoose.Schema(
             type:String,
             default:"pending",
         },
+        isArchivedByHR: {
+            type: Boolean,
+            default: false
+        },
+        archivedAt: {
+            type: Date,
+            default: null
+        }
     },
     {timestamps:true}
 );

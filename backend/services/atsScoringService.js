@@ -44,7 +44,13 @@ Example:
 react,nodejs,typescript
 `;
 
-    const aiResult = await askAI(semanticPrompt);
+    let aiResult = "";
+
+    try {
+      aiResult = await askAI(semanticPrompt);
+    } catch (error) {
+      console.log("Semantic ATS AI fallback used:", error.message);
+    }
 
     let semanticMatches = [];
 

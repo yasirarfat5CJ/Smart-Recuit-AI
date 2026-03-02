@@ -19,7 +19,7 @@ const getAllCandidates = async (req, res) => {
   try {
 
     // Get all candidates
-    const candidates = await Candidate.find();
+    const candidates = await Candidate.find({ isArchivedByHR: { $ne: true } });
 
     // Attach interview data
     const result = await Promise.all(
@@ -110,11 +110,15 @@ const getDashboardStats = async (req, res) => {
 
   try {
 
-    const totalCandidates = await Candidate.countDocuments();
+    const activeCandidateQuery = { isArchivedByHR: { $ne: true } };
+    const totalCandidates = await Candidate.countDocuments(activeCandidateQuery);
 
-    const candidates = await Candidate.find();
+    const candidates = await Candidate.find(activeCandidateQuery);
+    const candidateIds = candidates.map((c) => c._id);
 
-    const sessions = await InterviewSession.find();
+    const sessions = candidateIds.length
+      ? await InterviewSession.find({ candidateId: { $in: candidateIds } })
+      : [];
 
     // Average ATS Score
     const avgATS =
@@ -164,6 +168,10 @@ const getSingleCandidate = async (req, res) => {
     const candidate = await Candidate.findById(req.params.id);
 
     if (!candidate) {
+      return res.status(404).json({ message: "Candidate not found" });
+    }
+
+    if (candidate.isArchivedByHR && req.user?.role !== "candidate") {
       return res.status(404).json({ message: "Candidate not found" });
     }
 
@@ -218,14 +226,13 @@ const deleteCandidate = async (req, res) => {
       return res.status(404).json({ message: "Candidate not found" });
     }
 
-    const deletedInterviews = await InterviewSession.deleteMany({
-      candidateId: req.params.id
+    await Candidate.findByIdAndUpdate(req.params.id, {
+      isArchivedByHR: true,
+      archivedAt: new Date()
     });
-    await Candidate.findByIdAndDelete(req.params.id);
 
     res.json({
-      message: "Candidate deleted successfully",
-      deletedInterviewCount: deletedInterviews.deletedCount || 0
+      message: "Candidate removed from HR ranking successfully"
     });
 
   } catch (error) {
