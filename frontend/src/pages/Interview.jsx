@@ -7,6 +7,7 @@ export default function Interview() {
   const navigate = useNavigate();
 
   const [messages, setMessages] = useState([]);
+  const [currentQuestion, setCurrentQuestion] = useState("");
   const [input, setInput] = useState("");
   const [started, setStarted] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -80,6 +81,7 @@ export default function Interview() {
       if (startTimeoutRef.current) {
         clearTimeout(startTimeoutRef.current);
       }
+      setCurrentQuestion(question);
       setMessages((prev) => [
         ...prev,
         { sender: "ai", text: question },
@@ -88,6 +90,9 @@ export default function Interview() {
 
     socket.on("aiEvaluation", (data) => {
       setProcessing(false);
+      if (data?.nextQuestion) {
+        setCurrentQuestion(data.nextQuestion);
+      }
       setMessages((prev) => [
         ...prev,
         { sender: "ai", text: `Feedback: ${data.feedback}` },
@@ -167,6 +172,17 @@ export default function Interview() {
           <p>Candidate ID:</p>
           <p className="text-sm break-all">{candidateId}</p>
 
+          {currentQuestion ? (
+            <div className="mt-4 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-900/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-blue-700 dark:text-blue-300 font-semibold mb-2">
+                Current Question
+              </p>
+              <p className="text-sm leading-6 text-gray-900 dark:text-gray-100">
+                {currentQuestion}
+              </p>
+            </div>
+          ) : null}
+
           {!started && (
             <button
               onClick={startInterview}
@@ -186,12 +202,15 @@ export default function Interview() {
                 key={index}
                 className={`mb-3 ${msg.sender === "user" ? "text-right" : ""}`}
               >
+                <div className={`text-[11px] uppercase tracking-wide mb-1 ${msg.sender === "user" ? "text-blue-600 dark:text-blue-300" : "text-purple-600 dark:text-purple-300"}`}>
+                  {msg.sender === "user" ? "You" : "Interviewer"}
+                </div>
                 <span
                   className={`inline-block px-4 py-2 rounded-lg
                     ${
                       msg.sender === "user"
-                        ? "bg-blue-600 text-white"
-                        : "bg-purple-100 dark:bg-purple-700 text-gray-900 dark:text-white"
+                        ? "bg-blue-600 text-white rounded-br-none"
+                        : "bg-purple-100 dark:bg-purple-700 text-gray-900 dark:text-white rounded-bl-none"
                     }`}
                 >
                   {msg.text}
