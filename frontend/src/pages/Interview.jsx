@@ -50,14 +50,11 @@ export default function Interview() {
     if (startTimeoutRef.current) {
       clearTimeout(startTimeoutRef.current);
     }
-    startTimeoutRef.current = setTimeout(() => {
-      if (hasQuestionRef.current || !startedRef.current) return;
-      const fallbackQuestion =
-        "Let's begin. Tell me about your strongest project and why you chose that architecture.";
-      setProcessing(false);
-      setMessages((prev) => [...prev, { sender: "ai", text: fallbackQuestion }]);
-      hasQuestionRef.current = true;
-    }, 9000);
+	    startTimeoutRef.current = setTimeout(() => {
+	      if (hasQuestionRef.current || !startedRef.current) return;
+	      setProcessing(false);
+	      setError("The interviewer is taking longer than expected. Please wait a moment or restart the interview.");
+	    }, 20000);
   };
 
   // SOCKET EVENTS
