@@ -46,7 +46,7 @@ app.get('/task-ai', async (req, res) => {
     res.json({ result });
 });
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // 4. Use 'server.listen', not 'Server.listen'
 server.listen(PORT, () => {
