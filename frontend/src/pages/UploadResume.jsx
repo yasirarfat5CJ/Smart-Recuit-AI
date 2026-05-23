@@ -64,8 +64,14 @@ export default function UploadResume() {
     } catch (error) {
 
       console.log(error);
+      const backendMessage = error?.response?.data?.message;
+      const statusCode = error?.response?.status;
+      const networkMessage = error?.message;
+
       setError(
-        error?.response?.data?.message ||
+        backendMessage ||
+        (statusCode ? `Upload failed (${statusCode}). Please try again.` : null) ||
+        (networkMessage ? `Upload failed: ${networkMessage}` : null) ||
         "Upload failed. Please try again."
       );
 

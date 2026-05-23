@@ -20,11 +20,7 @@ API.interceptors.request.use((config) => {
 
 // Resume Upload
 export const UploadResumeAPI = (formData) => {
-  return API.post("/resume/upload", formData, {
-    headers: {
-      "Content-Type": "multipart/form-data",
-    },
-  });
+  return API.post("/resume/upload", formData);
 };
 
 // HR APIs
