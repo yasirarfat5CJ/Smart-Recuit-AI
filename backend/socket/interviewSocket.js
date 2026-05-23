@@ -16,6 +16,100 @@ module.exports = (io) => {
   const buildFallbackQuestion = () =>
     "Tell me about one project you built recently and explain the technical decisions you made.";
 
+  const sanitizeQuestionText = (text) =>
+    String(text || "")
+      .replace(/^[-*\s"'`]+/, "")
+      .replace(/[-*\s"'`]+$/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const detectAnswerTopic = (answer = "", resumeContext = {}) => {
+    const text = String(answer || "").toLowerCase();
+    const topics = [
+      ["api", ["api", "endpoint", "request", "response", "backend", "rest"]],
+      ["frontend", ["frontend", "ui", "react", "component", "state", "browser"]],
+      ["database", ["database", "mongodb", "schema", "query", "collection", "index"]],
+      ["authentication", ["auth", "jwt", "login", "token", "session", "password"]],
+      ["deployment", ["deploy", "deployment", "render", "netlify", "vercel", "docker"]],
+      ["debugging", ["bug", "debug", "error", "fix", "issue", "troubleshoot"]],
+      ["performance", ["performance", "optimize", "scalable", "latency", "speed"]],
+      ["testing", ["test", "testing", "jest", "unit", "integration"]],
+      ["ai", ["ai", "llm", "prompt", "groq", "model", "inference"]],
+      ["project", ["project", "portfolio", "feature", "system", "workflow"]]
+    ];
+
+    for (const [topic, keywords] of topics) {
+      if (keywords.some((keyword) => text.includes(keyword))) {
+        return topic;
+      }
+    }
+
+    const resumeHints = [
+      ...(Array.isArray(resumeContext.skills) ? resumeContext.skills : []),
+      ...(Array.isArray(resumeContext.techStack) ? resumeContext.techStack : [])
+    ]
+      .flat()
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+
+    return resumeHints[0] || "your last answer";
+  };
+
+  const buildAnswerAwareFallback = (stage, resumeContext = {}, answer = "", previousQuestion = "") => {
+    const topic = detectAnswerTopic(answer, resumeContext);
+    const project = getPrimaryProject(resumeContext);
+
+    if (/\b(sorry|don't know|not sure|skip)\b/i.test(String(answer || ""))) {
+      return `No problem. Please answer the same topic with one concrete example and one short explanation of why it works.`;
+    }
+
+    const followUps = {
+      technical_foundation: `Can you explain a practical example of ${topic} from your work or projects, and why the approach mattered?`,
+      core_subjects: `How would you apply ${topic} in a real system, and what tradeoff would you consider?`,
+      dsa_problem_solving: `If you had to solve a problem around ${topic}, how would you approach it step by step and what is the time complexity?`,
+      project_deep_dive: `In ${project}, where did ${topic} matter most, and what decision did you make there?`,
+      project_follow_up: `Based on your last answer about ${topic}, what would you improve, scale, or debug next?`
+    };
+
+    return followUps[stage] || `Let's go one step deeper into ${topic}. What would you do next?`;
+  };
+
+  const buildInterviewQuestionPrompt = ({ stage, resumeContext = {}, answer = "", previousQuestion = "", askedQuestions = [] }) => `
+You are a senior technical interviewer conducting a real-time interview.
+
+Rules:
+- Ask exactly ONE next question.
+- The question must directly build on the candidate's latest answer.
+- Do not reuse or paraphrase any previous question.
+- Avoid fixed templates and avoid mentioning "shall" unless the candidate brought up documentation wording.
+- Keep the question natural, specific, and based on the answer plus resume context.
+- Prefer a follow-up that checks understanding, tradeoffs, examples, edge cases, or debugging.
+- Do not give feedback in the question.
+
+Current stage: ${stage}
+Previous question: ${previousQuestion}
+Candidate answer: ${answer}
+Resume context: ${JSON.stringify(resumeContext)}
+Already asked questions: ${JSON.stringify(askedQuestions)}
+
+Return only the question text.
+`;
+
+  const generateInterviewQuestion = async ({ stage, resumeContext = {}, answer = "", previousQuestion = "", askedQuestions = [] }) => {
+    try {
+      const response = await askAI(buildInterviewQuestionPrompt({ stage, resumeContext, answer, previousQuestion, askedQuestions }));
+      const question = sanitizeQuestionText(response);
+
+      if (question && !hasSimilarQuestion(question, askedQuestions)) {
+        return question;
+      }
+    } catch (error) {
+      console.log("Interview question generation fallback used:", error.message);
+    }
+
+    return sanitizeQuestionText(buildAnswerAwareFallback(stage, resumeContext, answer, previousQuestion));
+  };
+
   const getPrimaryProject = (resumeContext = {}) => {
     const [project] = resumeContext.projects || [];
     if (!project) return "one of your projects";
@@ -81,67 +175,26 @@ module.exports = (io) => {
   };
 
   const buildSameTopicFollowUp = (previousQuestion, answer) => {
-    const question = String(previousQuestion || "that concept").trim();
     const lower = String(answer || "").toLowerCase();
 
     if (/\b(sorry|don'?t know|not sure|skip)\b/.test(lower)) {
-      return `No problem. Let's stay with the same question for one more attempt: "${question}" Give a simple example first, then explain the time or logic in one or two lines.`;
+      return `No problem. Please answer the same topic with one concrete example and one short explanation of why it works.`;
     }
 
-    return `You're on the right track, but I need a little more detail before we move on. For this question: "${question}", can you complete your explanation with a small example and mention why it works?`;
+    return `You’re on the right track, but I need one concrete example and one edge case or tradeoff before we move on.`;
   };
 
-  const buildStageQuestion = (stage, resumeContext = {}, answer = "", askedQuestions = []) => {
-    const project = getPrimaryProject(resumeContext);
-    const skill = getPrimarySkill(resumeContext);
-
-    const questionBank = {
-      technical_foundation: [
-        `Before we go into projects, explain one core concept in ${skill} that you have used in practice.`,
-        `What happens end to end when a request reaches one of your backend APIs?`,
-        `How do you structure a MERN feature from frontend state to backend API to database?`
-      ],
-      core_subjects: [
-        "Let's switch to core subjects. In OOP, what is inheritance, and how is it different from polymorphism?",
-        "In DBMS, what is normalization, and why do we use it?",
-        "In operating systems, what is the difference between a process and a thread?",
-        "In computer networks, what happens during a DNS lookup?"
-      ],
-      dsa_problem_solving: [
-        "Let's do a DSA-style question: how would you find the first non-repeating character in a string, and what is the time complexity?",
-        "If you had an array with duplicates, how would you detect duplicates efficiently and what tradeoffs would you consider?",
-        "Explain how you would choose between an array, hash map, stack, or queue for a problem."
-      ],
-      project_deep_dive: [
-        `Now let's discuss ${project}. What was the architecture and why did you design it that way?`,
-        `In ${project}, which component was most technically important and how did you implement it?`,
-        `Walk me through one important data flow in ${project}, from user action to final result.`
-      ],
-      project_follow_up: [
-        "In your last answer, what was the hardest tradeoff and why did you choose that approach?",
-        "How would you improve or scale that part if usage increased significantly?",
-        "What bug or failure case could happen there, and how would you debug it step by step?",
-        "How did you verify that the implementation was correct?"
-      ]
-    };
-
-    if (answer.toLowerCase().includes("dsa")) {
-      questionBank.project_follow_up.unshift(
-        "Sure, let's switch to DSA: explain how you would solve a two-sum problem and why your approach is efficient."
-      );
-    }
-
-    const questions = questionBank[stage] || questionBank.project_follow_up;
-    return questions.find((question) => !hasSimilarQuestion(question, askedQuestions)) || questions[0];
-  };
+  const buildStageQuestion = (stage, resumeContext = {}, answer = "", askedQuestions = [], previousQuestion = "") =>
+    sanitizeQuestionText(buildAnswerAwareFallback(stage, resumeContext, answer, previousQuestion || askedQuestions.at(-1) || ""));
 
   const buildFallbackEvaluation = (answer, previousQuestion, stage, resumeContext, askedQuestions) => {
     const answerState = analyzeAnswer(answer);
+    const topic = detectAnswerTopic(answer, resumeContext);
 
     if (answerState.isTopicSwitch) {
       return {
         feedback: "Sure, we can switch topics.",
-        nextQuestion: buildStageQuestion(answerState.requestedStage, resumeContext, answer, askedQuestions),
+        nextQuestion: buildStageQuestion(answerState.requestedStage, resumeContext, answer, askedQuestions, previousQuestion),
         shouldAdvance: true,
         answerQuality: "topic_switch"
       };
@@ -149,18 +202,18 @@ module.exports = (io) => {
 
     if (answerState.incomplete) {
       return {
-        feedback: "You have the starting idea, but the answer is still incomplete.",
+        feedback: `You’ve started answering about ${topic}, but it needs one concrete example and a bit more detail.`,
         nextQuestion: buildSameTopicFollowUp(previousQuestion, answer),
         shouldAdvance: false,
         answerQuality: "incomplete"
       };
     }
 
-    const feedback = "Good, that gives me enough signal to continue.";
+    const feedback = `Good — I can follow your reasoning on ${topic}.`;
 
     return {
       feedback,
-      nextQuestion: buildStageQuestion(stage, resumeContext, answer, askedQuestions),
+      nextQuestion: buildStageQuestion(stage, resumeContext, answer, askedQuestions, previousQuestion),
       shouldAdvance: true,
       answerQuality: "acceptable"
     };
@@ -352,16 +405,13 @@ INTERVIEW STYLE:
 	          }
 	        ];
 
-        let firstQuestion = buildStageQuestion("technical_foundation", resumeContext, "", askedQuestions);
-
-        try {
-          const aiFirstQuestion = await askAI(messages);
-          if (typeof aiFirstQuestion === "string" && aiFirstQuestion.trim()) {
-            firstQuestion = aiFirstQuestion.trim();
-          }
-        } catch (aiError) {
-          console.log("Start Interview AI fallback used:", aiError.message);
-        }
+        const firstQuestion = await generateInterviewQuestion({
+          stage: "technical_foundation",
+          resumeContext,
+          answer: "",
+          previousQuestion: "",
+          askedQuestions
+        });
 
 	        askedQuestions.push(firstQuestion);
 
@@ -409,9 +459,8 @@ INTERVIEW STYLE:
               : getInterviewStage(interviewTurn + 1));
 
 	        // ⭐ Senior evaluation prompt
-	        const evaluationPrompt = [
-	          ...messages,
-	          {
+          const evaluationPrompt = [
+            {
 	            role: "system",
 	            content: `
 You are a senior technical interviewer.
@@ -450,8 +499,9 @@ TASK:
 		  "answerQuality": "incomplete | acceptable | strong"
 		}
 		`
-	          }
-	        ];
+            },
+            ...messages.filter((message, index) => !(index === 0 && message.role === "system"))
+          ];
 
 	        let evaluation = buildFallbackEvaluation(answer, previousQuestion, nextStage, resumeContext, askedQuestions);
 
@@ -488,7 +538,13 @@ TASK:
             (evaluation.shouldAdvance !== false && hasSimilarQuestion(evaluation.nextQuestion, askedQuestions))
           ) {
 
-	          evaluation.nextQuestion = buildStageQuestion(nextStage, resumeContext, answer, askedQuestions) ||
+	          evaluation.nextQuestion = await generateInterviewQuestion({
+              stage: nextStage,
+              resumeContext,
+              answer,
+              previousQuestion,
+              askedQuestions
+            }) ||
               buildContextualFallbackQuestion(answer, askedQuestions);
 
 	        }
