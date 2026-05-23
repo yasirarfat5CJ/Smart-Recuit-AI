@@ -25,6 +25,11 @@ module.exports = (io) => {
 
   const detectAnswerTopic = (answer = "", resumeContext = {}) => {
     const text = String(answer || "").toLowerCase();
+
+    if (/^\s*(sorry|soory|sorryy|sry|apolog(y|ize)|my bad)\b/i.test(text)) {
+      return null;
+    }
+
     const topics = [
       ["api", ["api", "endpoint", "request", "response", "backend", "rest"]],
       ["frontend", ["frontend", "ui", "react", "component", "state", "browser"]],
@@ -52,15 +57,16 @@ module.exports = (io) => {
       .map((item) => String(item || "").trim())
       .filter(Boolean);
 
-    return resumeHints[0] || "your last answer";
+    return resumeHints[0] || null;
   };
 
   const buildAnswerAwareFallback = (stage, resumeContext = {}, answer = "", previousQuestion = "") => {
     const topic = detectAnswerTopic(answer, resumeContext);
     const project = getPrimaryProject(resumeContext);
+    const questionAnchor = sanitizeQuestionText(previousQuestion || buildFallbackQuestion());
 
     if (/\b(sorry|don't know|not sure|skip)\b/i.test(String(answer || ""))) {
-      return `No problem. Please answer the same topic with one concrete example and one short explanation of why it works.`;
+      return `No problem. Let's stay with the same question for one more attempt: "${questionAnchor}" Please give one concrete example and explain why it works.`;
     }
 
     const followUps = {
@@ -70,6 +76,10 @@ module.exports = (io) => {
       project_deep_dive: `In ${project}, where did ${topic} matter most, and what decision did you make there?`,
       project_follow_up: `Based on your last answer about ${topic}, what would you improve, scale, or debug next?`
     };
+
+    if (!topic) {
+      return `Let's go one step deeper into "${questionAnchor}". What would you do next?`;
+    }
 
     return followUps[stage] || `Let's go one step deeper into ${topic}. What would you do next?`;
   };
@@ -175,13 +185,14 @@ Return only the question text.
   };
 
   const buildSameTopicFollowUp = (previousQuestion, answer) => {
+    const question = sanitizeQuestionText(previousQuestion || buildFallbackQuestion());
     const lower = String(answer || "").toLowerCase();
 
     if (/\b(sorry|don'?t know|not sure|skip)\b/.test(lower)) {
-      return `No problem. Please answer the same topic with one concrete example and one short explanation of why it works.`;
+      return `No problem. Let's stay with the same question for one more attempt: "${question}" Please give one concrete example and explain why it works.`;
     }
 
-    return `You’re on the right track, but I need one concrete example and one edge case or tradeoff before we move on.`;
+    return `You’re on the right track, but I need one concrete example and one edge case or tradeoff for "${question}" before we move on.`;
   };
 
   const buildStageQuestion = (stage, resumeContext = {}, answer = "", askedQuestions = [], previousQuestion = "") =>
@@ -202,14 +213,18 @@ Return only the question text.
 
     if (answerState.incomplete) {
       return {
-        feedback: `You’ve started answering about ${topic}, but it needs one concrete example and a bit more detail.`,
+        feedback: topic
+          ? `You’ve started answering about ${topic}, but it needs one concrete example and a bit more detail.`
+          : `You’ve started answering, but it needs one concrete example and a bit more detail.`,
         nextQuestion: buildSameTopicFollowUp(previousQuestion, answer),
         shouldAdvance: false,
         answerQuality: "incomplete"
       };
     }
 
-    const feedback = `Good — I can follow your reasoning on ${topic}.`;
+    const feedback = topic
+      ? `Good — I can follow your reasoning on ${topic}.`
+      : "Good — I can follow your reasoning so far.";
 
     return {
       feedback,
@@ -381,26 +396,24 @@ Return only the question text.
 	          {
 	            role: "system",
 	            content: `
-	You are a SENIOR technical interviewer.
+  You are a senior technical interviewer having a natural one-on-one conversation.
 
-INTERVIEW STYLE:
+  INTERVIEW STYLE:
 
-- Think like experienced FAANG interviewer.
-- Humans rarely give perfect answers — accept partial understanding.
-- Evaluate conceptual clarity instead of exact wording.
-- Encourage candidate when answer is related or logically correct.
-	- Ask ONE question at a time.
-	- Increase difficulty gradually.
-	- Ask questions grounded in the candidate resume and projects.
-	- Read the candidate's latest answer before choosing the next question.
-	- Ask follow-up questions based on the candidate's actual response.
-	- NEVER repeat any previously asked question.
-	- Maintain natural conversational interview flow.
+  - Be warm, focused, and adaptive.
+  - Ask exactly one question at a time.
+  - Base every next question on the candidate's latest answer and the immediate prior question.
+  - Do not follow a scripted curriculum or fixed sequence.
+  - If the answer is incomplete, ask a short clarifying follow-up on the same idea.
+  - If the answer is strong, go a little deeper with a practical follow-up, edge case, or tradeoff.
+  - Only change topic when the candidate clearly switches or the conversation naturally leads there.
+  - Never repeat the same question.
+  - Keep the tone human and conversational.
 
-	Candidate resume context:
-	${JSON.stringify(resumeContext)}
+  Candidate resume context:
+  ${JSON.stringify(resumeContext)}
 
-	Start with a technical foundation question first. Do not start with project architecture unless the first answer naturally leads there.
+  Start with a realistic interview opener based on the resume context.
 	`
 	          }
 	        ];
@@ -458,44 +471,40 @@ INTERVIEW STYLE:
               ? currentStage
               : getInterviewStage(interviewTurn + 1));
 
-	        // ⭐ Senior evaluation prompt
+          const recentTranscript = messages.slice(-8).map((message) => `${message.role}: ${message.content}`).join("\n");
+
+          // ⭐ Senior evaluation prompt
           const evaluationPrompt = [
             {
 	            role: "system",
 	            content: `
-You are a senior technical interviewer.
+  You are a senior technical interviewer having a natural conversation.
 
-TASK:
+  TASK:
 
-	- Understand candidate answer from HUMAN perspective.
-	- Accept related or partially correct answers.
-	- Give constructive and supportive feedback.
-	- Focus on reasoning, not perfection.
-	- First judge whether the latest answer addresses the immediately previous question.
-	- If the answer is vague or incomplete, stay on the same topic and ask a targeted follow-up. Do not advance stages yet.
-	- If the answer is solid, ask the next resume-relevant question with gradually higher difficulty.
-	- Follow this interview order: technical foundation, DSA/problem solving, project deep-dive, then project follow-ups.
-	- Current stage: ${currentStage}
-	- Current next stage: ${nextStage}
+  - Read the candidate's latest answer carefully.
+  - Judge whether it actually addresses the previous question.
+  - If the answer is weak, partial, or an apology, stay on the same idea and ask one clarifying follow-up.
+  - If the answer is solid, ask one deeper follow-up that feels natural and specific.
+  - Use the resume context and recent transcript, but do not follow a scripted curriculum.
+  - Only change topic if the candidate clearly switches topic or the conversation naturally moves there.
+  - Avoid generic feedback.
+  - Never repeat or paraphrase an earlier question.
+  - Keep the tone human, concise, and encouraging.
 
-	IMPORTANT:
+  IMPORTANT:
 
-	- Immediately previous question: ${previousQuestion}
-	- Candidate resume context: ${JSON.stringify(resumeContext)}
-	- Already asked questions: ${JSON.stringify(askedQuestions)}
-	- DO NOT repeat or paraphrase any previously asked question.
-	- Generate a NEW relevant question for the current next stage.
-	- If the candidate asks to switch topic, such as "ask on dsa", "switch to projects", or "switch core subjects", honor that request naturally.
-	- Adapt difficulty based on conversation.
-	- Feedback must sound human and specific to the latest answer. Do not use generic "thanks, continue" feedback.
-	- For incomplete answers, your nextQuestion must refer to the immediately previous question and ask for clarification, example, edge case, or complexity.
+  - Immediately previous question: ${previousQuestion}
+  - Candidate resume context: ${JSON.stringify(resumeContext)}
+  - Recent transcript: ${recentTranscript}
+  - Already asked questions: ${JSON.stringify(askedQuestions)}
 
-	Return ONLY valid JSON:
+  Return ONLY valid JSON:
 
 	{
 	  "feedback": "human-like supportive feedback",
 		  "nextQuestion": "new technical question",
-		  "shouldAdvance": false,
+      "shouldAdvance": false,
 		  "answerQuality": "incomplete | acceptable | strong"
 		}
 		`
