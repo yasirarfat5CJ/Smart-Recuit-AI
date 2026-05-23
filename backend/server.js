@@ -46,9 +46,9 @@ app.get('/task-ai', async (req, res) => {
     res.json({ result });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 // 4. Use 'server.listen', not 'Server.listen'
 server.listen(PORT, () => {
-    console.log(`server is listening on the port http://localhost:${PORT}`);
+    console.log(`server is running on port ${PORT}`);
 });
