@@ -2,7 +2,6 @@ const express=require('express')
 
 const {createJob,getJobs,updateJob,deleteJob}=require("../controllers/jobController")
 const { protect, authorizeRoles } = require("../middleware/authMiddleware");
-const { AuthType } = require('@google/genai');
 
 const router=express.Router()
 

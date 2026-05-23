@@ -1,24 +1,18 @@
-const { GoogleGenAI } = require("@google/genai");
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
 
-const client = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-});
-
-
-const formatMessagesForGemini = (messages) => {
-
-  return messages.map(msg => ({
-    role: msg.role === "assistant" ? "model" : "user",
-    parts: [{ text: msg.content }]
+const formatMessagesForGroq = (messages) => {
+  return messages.map((msg) => ({
+    role: ["system", "assistant", "user"].includes(msg.role) ? msg.role : "user",
+    content: String(msg.content || "")
   }));
-
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isResourceExhausted = (error) => {
   const msg = String(error?.message || "");
-  return msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
+  return msg.includes("429") || msg.includes("rate_limit_exceeded");
 };
 
 const isNetworkFailure = (error) => {
@@ -33,21 +27,24 @@ const isNetworkFailure = (error) => {
 };
 
 const askAI = async (prompt) => {
+  if (!process.env.GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY is not configured");
+  }
 
-  let contents;
+  let messages;
 
   // If conversation memory (array)
   if (Array.isArray(prompt)) {
 
-    contents = formatMessagesForGemini(prompt);
+    messages = formatMessagesForGroq(prompt);
 
   } else {
 
     // simple string prompt
-    contents = [
+    messages = [
       {
         role: "user",
-        parts: [{ text: prompt }]
+        content: String(prompt || "")
       }
     ];
   }
@@ -57,14 +54,27 @@ const askAI = async (prompt) => {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await client.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents
+      const response = await fetch(GROQ_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages
+        })
       });
 
-      return response.text;
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(`${response.status} ${data?.error?.message || response.statusText}`);
+      }
+
+      return data?.choices?.[0]?.message?.content || "";
     } catch (error) {
-      console.error("Gemini Error:", error.message);
+      console.error("Groq Error:", error.message);
 
       const rateLimited = isResourceExhausted(error);
       const networkFailure = isNetworkFailure(error);

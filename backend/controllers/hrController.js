@@ -1,6 +1,35 @@
 const Candidate = require("../models/Candidate");
 const InterviewSession = require("../models/interviewSession");
 
+const RECOMMENDATION_SCORE_THRESHOLD = 70;
+
+const recommendationFromScore = (score) => (
+  Number(score) >= RECOMMENDATION_SCORE_THRESHOLD ? "Hire" : "No Hire"
+);
+
+const resolveRecommendation = (session) => {
+  if (!session) return "N/A";
+
+  if (Number.isFinite(Number(session.totalScore))) {
+    return recommendationFromScore(session.totalScore);
+  }
+
+  return session?.finalSummary?.recommendation || "N/A";
+};
+
+const normalizeFinalSummary = (session) => {
+  if (!session?.finalSummary) return null;
+
+  const rawSummary = typeof session.finalSummary.toObject === "function"
+    ? session.finalSummary.toObject()
+    : session.finalSummary;
+
+  return {
+    ...rawSummary,
+    recommendation: resolveRecommendation(session)
+  };
+};
+
 const buildOwnerQuery = (user) => {
   const orConditions = [{ userId: user._id }];
 
@@ -37,7 +66,7 @@ const getAllCandidates = async (req, res) => {
 
           totalScore: session?.totalScore || 0,
 
-          recommendation: session?.finalSummary?.recommendation || "N/A"
+          recommendation: resolveRecommendation(session)
 
         };
 
@@ -94,7 +123,7 @@ const getMyCandidateDashboard = async (req, res) => {
         atsScore: latestCandidate.atsScore,
         parsedResume: latestCandidate.parsedResume,
         totalScore: session?.totalScore || 0,
-        finalSummary: session?.finalSummary || null,
+        finalSummary: normalizeFinalSummary(session),
         interviewPending: !session?.finalSummary
       }
     });
@@ -132,7 +161,7 @@ const getDashboardStats = async (req, res) => {
 
     // Hire Recommendations
     const hireCount = sessions.filter(
-      s => s.finalSummary?.recommendation === "Hire"
+      s => resolveRecommendation(s) === "Hire"
     ).length;
 
     // Top Performer
@@ -204,7 +233,7 @@ const getSingleCandidate = async (req, res) => {
 
       totalScore: session?.totalScore || 0,
 
-      finalSummary: session?.finalSummary || null
+      finalSummary: normalizeFinalSummary(session)
 
     });
 
