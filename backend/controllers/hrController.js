@@ -1,28 +1,42 @@
 const Candidate = require("../models/Candidate");
 const InterviewSession = require("../models/interviewSession");
 
-const RECOMMENDATION_SCORE_THRESHOLD = 70;
+const HIRE_SCORE_THRESHOLD = 70;
 
-const recommendationFromScore = (score) => (
-  Number(score) >= RECOMMENDATION_SCORE_THRESHOLD ? "Hire" : "No Hire"
-);
+const recommendationFromScore = (score) =>
+  Number(score) >= HIRE_SCORE_THRESHOLD ? "Hire" : "No Hire";
 
+/**
+ * FIX: The original code called Number.isFinite(Number(session.totalScore)),
+ * which is true for 0 (the default). This caused every candidate who hadn't
+ * done their interview yet to show "No Hire" instead of "N/A".
+ *
+ * Now we only derive a recommendation when the interview is actually complete
+ * (finalSummary exists and totalScore > 0).
+ */
 const resolveRecommendation = (session) => {
   if (!session) return "N/A";
 
-  if (Number.isFinite(Number(session.totalScore))) {
+  // Interview completed and scored
+  if (session.finalSummary && session.totalScore > 0) {
     return recommendationFromScore(session.totalScore);
   }
 
-  return session?.finalSummary?.recommendation || "N/A";
+  // Completed but use the AI recommendation directly if score is missing
+  if (session.finalSummary?.recommendation) {
+    return session.finalSummary.recommendation;
+  }
+
+  return "N/A"; // interview pending or abandoned
 };
 
 const normalizeFinalSummary = (session) => {
   if (!session?.finalSummary) return null;
 
-  const rawSummary = typeof session.finalSummary.toObject === "function"
-    ? session.finalSummary.toObject()
-    : session.finalSummary;
+  const rawSummary =
+    typeof session.finalSummary.toObject === "function"
+      ? session.finalSummary.toObject()
+      : session.finalSummary;
 
   return {
     ...rawSummary,
@@ -34,71 +48,48 @@ const buildOwnerQuery = (user) => {
   const orConditions = [{ userId: user._id }];
 
   if (user.email) {
-    const escapedEmail = String(user.email).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    orConditions.push({
-      email: { $regex: `^${escapedEmail}$`, $options: "i" }
-    });
+    const escaped = String(user.email).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    orConditions.push({ email: { $regex: `^${escaped}$`, $options: "i" } });
   }
 
   return { $or: orConditions };
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
 const getAllCandidates = async (req, res) => {
-
   try {
-
-    // Get all candidates
     const candidates = await Candidate.find({ isArchivedByHR: { $ne: true } });
 
-    // Attach interview data
     const result = await Promise.all(
-
       candidates.map(async (candidate) => {
-
         const session = await InterviewSession
           .findOne({ candidateId: candidate._id })
           .sort({ createdAt: -1 });
 
         return {
-           _id: candidate._id, 
-          name: candidate.name,
-          atsScore: candidate.atsScore,
-
-          totalScore: session?.totalScore || 0,
-
+          _id:            candidate._id,
+          name:           candidate.name,
+          atsScore:       candidate.atsScore,
+          totalScore:     session?.totalScore || 0,
           recommendation: resolveRecommendation(session)
-
         };
-
       })
-
     );
 
-    // Sort by ATS + interview score
-    result.sort((a, b) => {
-
-      const scoreA = a.atsScore + a.totalScore;
-      const scoreB = b.atsScore + b.totalScore;
-
-      return scoreB - scoreA;
-
-    });
+    result.sort((a, b) => (b.atsScore + b.totalScore) - (a.atsScore + a.totalScore));
 
     res.json(result);
-
   } catch (error) {
-
     res.status(500).json({ message: error.message });
-
   }
-
 };
 
 const getMyCandidateDashboard = async (req, res) => {
-
   try {
-
-    const ownerQuery = buildOwnerQuery(req.user);
+    const ownerQuery  = buildOwnerQuery(req.user);
     const uploadCount = await Candidate.countDocuments(ownerQuery);
 
     if (uploadCount === 0) {
@@ -118,82 +109,52 @@ const getMyCandidateDashboard = async (req, res) => {
     res.json({
       uploadCount,
       latestCandidate: {
-        _id: latestCandidate._id,
-        name: latestCandidate.name,
-        atsScore: latestCandidate.atsScore,
-        parsedResume: latestCandidate.parsedResume,
-        totalScore: session?.totalScore || 0,
-        finalSummary: normalizeFinalSummary(session),
+        _id:              latestCandidate._id,
+        name:             latestCandidate.name,
+        atsScore:         latestCandidate.atsScore,
+        parsedResume:     latestCandidate.parsedResume,
+        totalScore:       session?.totalScore || 0,
+        finalSummary:     normalizeFinalSummary(session),
         interviewPending: !session?.finalSummary
       }
     });
-
   } catch (error) {
-
     res.status(500).json({ message: error.message });
-
   }
-
 };
+
 const getDashboardStats = async (req, res) => {
-
   try {
-
-    const activeCandidateQuery = { isArchivedByHR: { $ne: true } };
-    const totalCandidates = await Candidate.countDocuments(activeCandidateQuery);
-
-    const candidates = await Candidate.find(activeCandidateQuery);
-    const candidateIds = candidates.map((c) => c._id);
+    const activeQuery     = { isArchivedByHR: { $ne: true } };
+    const totalCandidates = await Candidate.countDocuments(activeQuery);
+    const candidates      = await Candidate.find(activeQuery);
+    const candidateIds    = candidates.map((c) => c._id);
 
     const sessions = candidateIds.length
       ? await InterviewSession.find({ candidateId: { $in: candidateIds } })
       : [];
 
-    // Average ATS Score
-    const avgATS =
-      candidates.reduce((sum, c) => sum + (c.atsScore || 0), 0) /
-      (candidates.length || 1);
+    const avgATS = candidates.reduce((s, c) => s + (c.atsScore || 0), 0) / (candidates.length || 1);
+    const avgInterview = sessions.reduce((s, sess) => s + (sess.totalScore || 0), 0) / (sessions.length || 1);
 
-    // Average Interview Score
-    const avgInterview =
-      sessions.reduce((sum, s) => sum + (s.totalScore || 0), 0) /
-      (sessions.length || 1);
+    const hireCount = sessions.filter((s) => resolveRecommendation(s) === "Hire").length;
 
-    // Hire Recommendations
-    const hireCount = sessions.filter(
-      s => resolveRecommendation(s) === "Hire"
-    ).length;
-
-    // Top Performer
-    const topSession = sessions.sort(
-      (a, b) => (b.totalScore || 0) - (a.totalScore || 0)
-    )[0];
+    const topSession = [...sessions].sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0))[0];
 
     res.json({
-
       totalCandidates,
-
-      averageATSScore: Math.round(avgATS),
-
+      averageATSScore:      Math.round(avgATS),
       averageInterviewScore: Math.round(avgInterview),
-
-      hireRecommendations: hireCount,
-
-      topPerformer: topSession || null
-
+      hireRecommendations:  hireCount,
+      topPerformer:         topSession || null
     });
-
   } catch (error) {
-
     res.status(500).json({ message: error.message });
-
   }
-
 };
+
 const getSingleCandidate = async (req, res) => {
-
   try {
-
     const candidate = await Candidate.findById(req.params.id);
 
     if (!candidate) {
@@ -222,33 +183,20 @@ const getSingleCandidate = async (req, res) => {
       .sort({ createdAt: -1 });
 
     res.json({
-
-      _id: candidate._id,
-
-      name: candidate.name,
-
-      atsScore: candidate.atsScore,
-
+      _id:          candidate._id,
+      name:         candidate.name,
+      atsScore:     candidate.atsScore,
       parsedResume: candidate.parsedResume,
-
-      totalScore: session?.totalScore || 0,
-
+      totalScore:   session?.totalScore || 0,
       finalSummary: normalizeFinalSummary(session)
-
     });
-
   } catch (error) {
-
     res.status(500).json({ message: error.message });
-
   }
-
 };
 
 const deleteCandidate = async (req, res) => {
-
   try {
-
     const candidate = await Candidate.findById(req.params.id);
 
     if (!candidate) {
@@ -260,16 +208,10 @@ const deleteCandidate = async (req, res) => {
       archivedAt: new Date()
     });
 
-    res.json({
-      message: "Candidate removed from HR ranking successfully"
-    });
-
+    res.json({ message: "Candidate removed from HR ranking successfully" });
   } catch (error) {
-
     res.status(500).json({ message: error.message });
-
   }
-
 };
 
 module.exports = {

@@ -5,16 +5,10 @@ const InterviewSession = require("../models/interviewSession");
 const User = require("../models/User");
 
 module.exports = (io) => {
-  const buildFallbackSummary = () => ({
-    strengths: "Good effort during the interview.",
-    weaknesses: "Could not generate a detailed AI summary.",
-    overallFeedback: "Please retry the interview summary or review chat transcript manually.",
-    recommendation: "No Hire",
-    overallRating: 0
-  });
 
-  const buildFallbackQuestion = () =>
-    "Tell me about one project you built recently and explain the technical decisions you made.";
+  // ─────────────────────────────────────────────────────────────────────────
+  // Stateless helper functions
+  // ─────────────────────────────────────────────────────────────────────────
 
   const sanitizeQuestionText = (text) =>
     String(text || "")
@@ -23,347 +17,412 @@ module.exports = (io) => {
       .replace(/\s+/g, " ")
       .trim();
 
-  const detectAnswerTopic = (answer = "", resumeContext = {}) => {
-    const text = String(answer || "").toLowerCase();
-
-    if (/^\s*(sorry|soory|sorryy|sry|apolog(y|ize)|my bad)\b/i.test(text)) {
-      return null;
-    }
-
-    const topics = [
-      ["api", ["api", "endpoint", "request", "response", "backend", "rest"]],
-      ["frontend", ["frontend", "ui", "react", "component", "state", "browser"]],
-      ["database", ["database", "mongodb", "schema", "query", "collection", "index"]],
-      ["authentication", ["auth", "jwt", "login", "token", "session", "password"]],
-      ["deployment", ["deploy", "deployment", "render", "netlify", "vercel", "docker"]],
-      ["debugging", ["bug", "debug", "error", "fix", "issue", "troubleshoot"]],
-      ["performance", ["performance", "optimize", "scalable", "latency", "speed"]],
-      ["testing", ["test", "testing", "jest", "unit", "integration"]],
-      ["ai", ["ai", "llm", "prompt", "groq", "model", "inference"]],
-      ["project", ["project", "portfolio", "feature", "system", "workflow"]]
-    ];
-
-    for (const [topic, keywords] of topics) {
-      if (keywords.some((keyword) => text.includes(keyword))) {
-        return topic;
-      }
-    }
-
-    const resumeHints = [
-      ...(Array.isArray(resumeContext.skills) ? resumeContext.skills : []),
-      ...(Array.isArray(resumeContext.techStack) ? resumeContext.techStack : [])
-    ]
-      .flat()
-      .map((item) => String(item || "").trim())
-      .filter(Boolean);
-
-    return resumeHints[0] || null;
-  };
-
-  const buildAnswerAwareFallback = (stage, resumeContext = {}, answer = "", previousQuestion = "") => {
-    const topic = detectAnswerTopic(answer, resumeContext);
-    const project = getPrimaryProject(resumeContext);
-    const questionAnchor = sanitizeQuestionText(previousQuestion || buildFallbackQuestion());
-
-    if (/\b(sorry|don't know|not sure|skip)\b/i.test(String(answer || ""))) {
-      return `No problem. Let's stay with the same question for one more attempt: "${questionAnchor}" Please give one concrete example and explain why it works.`;
-    }
-
-    const followUps = {
-      technical_foundation: `Can you explain a practical example of ${topic} from your work or projects, and why the approach mattered?`,
-      core_subjects: `How would you apply ${topic} in a real system, and what tradeoff would you consider?`,
-      dsa_problem_solving: `If you had to solve a problem around ${topic}, how would you approach it step by step and what is the time complexity?`,
-      project_deep_dive: `In ${project}, where did ${topic} matter most, and what decision did you make there?`,
-      project_follow_up: `Based on your last answer about ${topic}, what would you improve, scale, or debug next?`
-    };
-
-    if (!topic) {
-      return `Let's go one step deeper into "${questionAnchor}". What would you do next?`;
-    }
-
-    return followUps[stage] || `Let's go one step deeper into ${topic}. What would you do next?`;
-  };
-
-  const buildInterviewQuestionPrompt = ({ stage, resumeContext = {}, answer = "", previousQuestion = "", askedQuestions = [] }) => `
-You are a senior technical interviewer conducting a real-time interview.
-
-Rules:
-- Ask exactly ONE next question.
-- The question must directly build on the candidate's latest answer.
-- Do not reuse or paraphrase any previous question.
-- Avoid fixed templates and avoid mentioning "shall" unless the candidate brought up documentation wording.
-- Keep the question natural, specific, and based on the answer plus resume context.
-- Prefer a follow-up that checks understanding, tradeoffs, examples, edge cases, or debugging.
-- Do not give feedback in the question.
-
-Current stage: ${stage}
-Previous question: ${previousQuestion}
-Candidate answer: ${answer}
-Resume context: ${JSON.stringify(resumeContext)}
-Already asked questions: ${JSON.stringify(askedQuestions)}
-
-Return only the question text.
-`;
-
-  const generateInterviewQuestion = async ({ stage, resumeContext = {}, answer = "", previousQuestion = "", askedQuestions = [] }) => {
-    try {
-      const response = await askAI(buildInterviewQuestionPrompt({ stage, resumeContext, answer, previousQuestion, askedQuestions }));
-      const question = sanitizeQuestionText(response);
-
-      if (question && !hasSimilarQuestion(question, askedQuestions)) {
-        return question;
-      }
-    } catch (error) {
-      console.log("Interview question generation fallback used:", error.message);
-    }
-
-    return sanitizeQuestionText(buildAnswerAwareFallback(stage, resumeContext, answer, previousQuestion));
-  };
-
-  const getPrimaryProject = (resumeContext = {}) => {
-    const [project] = resumeContext.projects || [];
-    if (!project) return "one of your projects";
-    return project.title || project.name || String(project);
-  };
-
-  const getPrimarySkill = (resumeContext = {}) => {
-    const skills = [
-      ...(Array.isArray(resumeContext.skills) ? resumeContext.skills : []),
-      ...(Array.isArray(resumeContext.techStack) ? resumeContext.techStack : [])
-    ].flat();
-
-    return skills.find(Boolean) || "your main technical stack";
-  };
-
-  const getInterviewStage = (turn) => {
-    if (turn === 0) return "technical_foundation";
-    if (turn === 1) return "dsa_problem_solving";
-    if (turn === 2) return "project_deep_dive";
-    return "project_follow_up";
-  };
-
-  const getStageTurn = (stage) => {
-    if (stage === "technical_foundation" || stage === "core_subjects") return 0;
-    if (stage === "dsa_problem_solving") return 1;
-    if (stage === "project_deep_dive") return 2;
-    return 3;
-  };
-
-  const detectRequestedStage = (lower) => {
-    if (/\b(project|projects|portfolio|resume project)\b/.test(lower)) {
-      return "project_deep_dive";
-    }
-
-    if (/\b(dsa|data structure|algorithm|coding problem|coding round)\b/.test(lower)) {
-      return "dsa_problem_solving";
-    }
-
-    if (/\b(core subject|core subjects|oop|oops|dbms|database|os|operating system|computer network|networks|cn)\b/.test(lower)) {
-      return "core_subjects";
-    }
-
-    if (/\b(technical|basics|fundamental|foundation)\b/.test(lower)) {
-      return "technical_foundation";
-    }
-
-    return null;
-  };
-
-  const analyzeAnswer = (answer) => {
-    const text = String(answer || "").trim();
-    const words = text.split(/\s+/).filter(Boolean);
-    const lower = text.toLowerCase();
-    const requestedStage = detectRequestedStage(lower);
-
-    return {
-      wordCount: words.length,
-      requestedStage,
-      isTopicSwitch: Boolean(requestedStage),
-      asksForDsa: requestedStage === "dsa_problem_solving",
-      incomplete: !requestedStage && (words.length < 18 || /(\{$|,$|-$|example\s*$)/i.test(text))
-    };
-  };
-
-  const buildSameTopicFollowUp = (previousQuestion, answer) => {
-    const question = sanitizeQuestionText(previousQuestion || buildFallbackQuestion());
-    const lower = String(answer || "").toLowerCase();
-
-    if (/\b(sorry|don'?t know|not sure|skip)\b/.test(lower)) {
-      return `No problem. Let's stay with the same question for one more attempt: "${question}" Please give one concrete example and explain why it works.`;
-    }
-
-    return `You’re on the right track, but I need one concrete example and one edge case or tradeoff for "${question}" before we move on.`;
-  };
-
-  const buildStageQuestion = (stage, resumeContext = {}, answer = "", askedQuestions = [], previousQuestion = "") =>
-    sanitizeQuestionText(buildAnswerAwareFallback(stage, resumeContext, answer, previousQuestion || askedQuestions.at(-1) || ""));
-
-  const buildFallbackEvaluation = (answer, previousQuestion, stage, resumeContext, askedQuestions) => {
-    const answerState = analyzeAnswer(answer);
-    const topic = detectAnswerTopic(answer, resumeContext);
-
-    if (answerState.isTopicSwitch) {
-      return {
-        feedback: "Sure, we can switch topics.",
-        nextQuestion: buildStageQuestion(answerState.requestedStage, resumeContext, answer, askedQuestions, previousQuestion),
-        shouldAdvance: true,
-        answerQuality: "topic_switch"
-      };
-    }
-
-    if (answerState.incomplete) {
-      return {
-        feedback: topic
-          ? `You’ve started answering about ${topic}, but it needs one concrete example and a bit more detail.`
-          : `You’ve started answering, but it needs one concrete example and a bit more detail.`,
-        nextQuestion: buildSameTopicFollowUp(previousQuestion, answer),
-        shouldAdvance: false,
-        answerQuality: "incomplete"
-      };
-    }
-
-    const feedback = topic
-      ? `Good — I can follow your reasoning on ${topic}.`
-      : "Good — I can follow your reasoning so far.";
-
-    return {
-      feedback,
-      nextQuestion: buildStageQuestion(stage, resumeContext, answer, askedQuestions, previousQuestion),
-      shouldAdvance: true,
-      answerQuality: "acceptable"
-    };
-  };
-
-  const normalizeQuestion = (question) =>
-    String(question || "")
+  const normalizeQuestion = (q) =>
+    String(q || "")
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, " ")
-      .replace(/\b(can|could|please|tell|me|about|explain|describe|what|why|how|the|a|an|your|you)\b/g, " ")
+      .replace(
+        /\b(can|could|please|tell|me|about|explain|describe|what|why|how|the|a|an|your|you)\b/g,
+        " "
+      )
       .replace(/\s+/g, " ")
       .trim();
 
-  const questionSimilarity = (first, second) => {
-    const firstTokens = new Set(normalizeQuestion(first).split(" ").filter(Boolean));
-    const secondTokens = new Set(normalizeQuestion(second).split(" ").filter(Boolean));
-
-    if (!firstTokens.size || !secondTokens.size) return 0;
-
-    const overlap = [...firstTokens].filter((token) => secondTokens.has(token)).length;
-    return overlap / Math.max(firstTokens.size, secondTokens.size);
+  const questionSimilarity = (a, b) => {
+    const ta = new Set(normalizeQuestion(a).split(" ").filter(Boolean));
+    const tb = new Set(normalizeQuestion(b).split(" ").filter(Boolean));
+    if (!ta.size || !tb.size) return 0;
+    return [...ta].filter((t) => tb.has(t)).length / Math.max(ta.size, tb.size);
   };
 
-  const hasSimilarQuestion = (question, askedQuestions) =>
-    askedQuestions.some((askedQuestion) =>
-      normalizeQuestion(question) === normalizeQuestion(askedQuestion) ||
-      questionSimilarity(question, askedQuestion) >= 0.72
+  const hasSimilarQuestion = (q, asked) =>
+    asked.some(
+      (a) =>
+        normalizeQuestion(q) === normalizeQuestion(a) ||
+        questionSimilarity(q, a) >= 0.72
     );
 
-  const buildContextualFallbackQuestion = (answer, askedQuestions) => {
-    const templates = [
-      `Based on your last answer, what tradeoff did you consider and why did you choose that approach?`,
-      `What was the hardest technical problem in that work, and how did you debug it step by step?`,
-      `How would you scale or improve that solution if the number of users increased significantly?`,
-      `Which part of that implementation would you refactor first, and what would you change?`,
-      `How did you validate that your solution was correct and reliable?`
-    ];
-
-    return templates.find((question) => !hasSimilarQuestion(question, askedQuestions)) ||
-      `Let's go deeper into your previous answer: what specific technical decision had the biggest impact?`;
+  const focusAppearsInQuestion = (focus, question) => {
+    if (!focus) return true;
+    const focusTokens = normalizeQuestion(focus).split(" ").filter((token) => token.length > 1);
+    const questionText = normalizeQuestion(question);
+    return focusTokens.some((token) => questionText.includes(token));
   };
 
+  const buildFocusQuestion = (focus) =>
+    `Can you explain ${focus} based on what you mentioned in your resume?`;
+
   const parseJsonFromResponse = (raw) => {
-    if (typeof raw !== "string" || !raw.trim()) {
-      throw new Error("Empty AI response");
-    }
-
-    const cleanJson = raw
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
-
+    if (!raw || !String(raw).trim()) throw new Error("Empty AI response");
+    const cleaned = String(raw).replace(/```json/gi, "").replace(/```/g, "").trim();
     try {
-      return JSON.parse(cleanJson);
-    } catch (fullParseError) {
-      const matches = cleanJson.match(/\{[\s\S]*?\}/g) || [];
-
-      for (const fragment of matches) {
-        try {
-          return JSON.parse(fragment);
-        } catch (fragmentError) {
-          // try next fragment
-        }
+      return JSON.parse(cleaned);
+    } catch (_) {
+      // Try all {...} blocks from shortest to find the evaluation JSON
+      const blocks = [...cleaned.matchAll(/\{[\s\S]*?\}/g)].map((m) => m[0]);
+      for (const block of blocks) {
+        try { return JSON.parse(block); } catch (_) { /* next */ }
       }
-
-      const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-
-      throw fullParseError;
+      const greedy = cleaned.match(/\{[\s\S]*\}/);
+      if (greedy) return JSON.parse(greedy[0]);
+      throw new Error("No valid JSON in AI response");
     }
   };
 
   const normalizeRating = (value) => {
-    const rating = Number(value);
-    if (!Number.isFinite(rating)) return 0;
-    if (rating > 10 && rating <= 100) return Math.max(0, Math.min(10, rating / 10));
-    return Math.max(0, Math.min(10, rating));
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    if (n > 10 && n <= 100) return Math.max(0, Math.min(10, n / 10));
+    return Math.max(0, Math.min(10, n));
   };
 
-  const recommendationFromRating = (rating) => (rating >= 7 ? "Hire" : "No Hire");
+  const recommendationFromRating = (r) => (r >= 7 ? "Hire" : "No Hire");
+
+  const compactText = (value, max = 180) =>
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, max);
+
+  const getProjectTitle = (project) => {
+    if (!project) return "";
+    if (typeof project === "string") return compactText(project);
+    return compactText(project.title || project.name || project.description);
+  };
+
+  const buildResumeInterviewPlan = async (resumeContext = {}) => {
+    const fallbackTopics = [
+      ...(resumeContext.projects || []).map((project) => ({
+        focus: getProjectTitle(project),
+        evidence: project,
+        reason: "listed resume project"
+      })),
+      ...(resumeContext.experience || []).map((item) => ({
+        focus: compactText(item.role || item.title || item.company || item.description),
+        evidence: item,
+        reason: "listed experience"
+      })),
+      ...(resumeContext.skills || []).map((skill) => ({
+        focus: compactText(skill),
+        evidence: skill,
+        reason: "listed skill"
+      })),
+      ...(resumeContext.techStack || []).map((skill) => ({
+        focus: compactText(skill),
+        evidence: skill,
+        reason: "listed technology"
+      }))
+    ].filter((item) => item.focus);
+
+    const fallbackPlan = fallbackTopics.length
+      ? fallbackTopics.slice(0, 12)
+      : [{ focus: "the candidate's resume", evidence: resumeContext, reason: "resume overview" }];
+
+    const prompt = `
+Create a dynamic interview plan using ONLY this parsed resume.
+
+Return ONLY valid JSON:
+{
+  "topics": [
+    {
+      "focus": "specific resume topic/project/skill",
+      "evidence": "short reason from resume",
+      "whyAsk": "what this topic helps evaluate"
+    }
+  ]
+}
+
+Rules:
+- Do not add generic interview sections unless they appear in the resume.
+- Do not invent skills, projects, companies, or tools.
+- Prefer concrete projects, experience items, and strongest resume skills.
+- Order topics from strongest / most relevant resume evidence to weaker evidence.
+- Keep each focus short.
+
+Resume:
+${JSON.stringify(resumeContext)}
+`.trim();
+
+    try {
+      const response = await askAI(prompt);
+      const parsed = parseJsonFromResponse(response);
+      const topics = Array.isArray(parsed.topics)
+        ? parsed.topics
+          .map((topic) => ({
+            focus: compactText(topic.focus),
+            evidence: compactText(topic.evidence || topic.reason || topic.whyAsk),
+            reason: compactText(topic.whyAsk || topic.reason || topic.evidence)
+          }))
+          .filter((topic) => topic.focus)
+        : [];
+
+      return topics.length ? topics.slice(0, 12) : fallbackPlan;
+    } catch (error) {
+      console.warn("[buildResumeInterviewPlan] AI failed:", error.message);
+      return fallbackPlan;
+    }
+  };
+
+  const getPlanFocus = (plan, turn) =>
+    plan.length ? plan[Math.min(turn, plan.length - 1)] : { focus: "the candidate's resume" };
+
+  const createLocalResponseState = (answer) => {
+    const text = String(answer || "").trim();
+    const words = text.split(/\s+/).filter(Boolean);
+    const asksClarification = /\?/.test(text) ||
+      /\b(what do you mean|can you explain|could you explain|clarify|example|concrete example|meaning)\b/i.test(text);
+
+    return {
+      wordCount: words.length,
+      intent: asksClarification ? "clarification_request" : "answer",
+      requestedFocus: null,
+      answerQuality: words.length < 18 ? "incomplete" : "acceptable",
+      shouldAdvance: asksClarification ? false : words.length >= 18,
+      needsSameTopicFollowUp: asksClarification || words.length < 18,
+      feedbackIntent: asksClarification ? "clarify_question" : words.length < 18 ? "needs_more_detail" : "acknowledge",
+      confidence: 0.4
+    };
+  };
+
+  const buildFallbackSummary = () => ({
+    strengths: "Good effort throughout the interview.",
+    weaknesses: "Could not generate a detailed AI summary.",
+    overallFeedback: "Please retry or review the chat transcript manually.",
+    recommendation: "No Hire",
+    overallRating: 0
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // AI classifiers and question generator
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const classifyCandidateResponse = async ({ answer, previousQuestion, currentStage, resumeContext, recentTranscript }) => {
+    const fallback = createLocalResponseState(answer);
+    const prompt = `
+Classify a candidate's latest interview response for a dynamic technical interview.
+
+Return ONLY valid JSON:
+{
+  "intent": "answer | cannot_answer | topic_switch | clarification_request",
+  "requestedFocus": "short topic phrase requested by the candidate, or null",
+  "answerQuality": "empty | incomplete | acceptable | strong",
+  "shouldAdvance": false,
+  "needsSameTopicFollowUp": true,
+  "feedbackIntent": "acknowledge | needs_more_detail | honest_gap | switch_topic | clarify_question | skip_after_repeated_gap",
+  "confidence": 0.0
+}
+
+Guidelines:
+- "cannot_answer" means the candidate says they do not know, did not apply/use it, cannot recall, wants to skip, or apologizes instead of answering.
+- "topic_switch" means the candidate asks to move to another area.
+- "clarification_request" means the candidate asks what the question means or asks for clarification/example instead of answering.
+- Do not infer a role-specific topic from sparse text.
+- If the answer is short but contains a correct core idea, mark incomplete unless it gives at least one example, reason, tradeoff, edge case, or complexity.
+- requestedFocus must preserve the exact requested topic when present, for example "the recruitment platform", "LangChain", "database design", "system design". Do not replace it with a different resume skill.
+
+Previous question: ${previousQuestion}
+Current stage: ${currentStage}
+Resume context: ${JSON.stringify(resumeContext)}
+Recent transcript:
+${recentTranscript}
+Candidate answer: ${answer}
+`.trim();
+
+    try {
+      const response = await askAI(prompt);
+      const parsed = parseJsonFromResponse(response);
+
+      return {
+        ...fallback,
+        intent: ["answer", "cannot_answer", "topic_switch", "clarification_request"].includes(parsed.intent)
+          ? parsed.intent
+          : fallback.intent,
+        requestedFocus: parsed.requestedFocus ? sanitizeQuestionText(parsed.requestedFocus) : null,
+        answerQuality: ["empty", "incomplete", "acceptable", "strong"].includes(parsed.answerQuality)
+          ? parsed.answerQuality
+          : fallback.answerQuality,
+        shouldAdvance: typeof parsed.shouldAdvance === "boolean"
+          ? parsed.shouldAdvance
+          : fallback.shouldAdvance,
+        needsSameTopicFollowUp: typeof parsed.needsSameTopicFollowUp === "boolean"
+          ? parsed.needsSameTopicFollowUp
+          : fallback.needsSameTopicFollowUp,
+        feedbackIntent: parsed.feedbackIntent || fallback.feedbackIntent,
+        confidence: Number.isFinite(Number(parsed.confidence)) ? Number(parsed.confidence) : fallback.confidence
+      };
+    } catch (err) {
+      console.warn("[classifyCandidateResponse] AI failed:", err.message);
+      return fallback;
+    }
+  };
+
+  const generateInterviewQuestion = async ({ resumeContext, answer, previousQuestion, askedQuestions, currentFocus, requestedFocus = null }) => {
+    const prompt = `
+You are a senior technical interviewer conducting a real-time interview.
+
+Rules:
+- Ask exactly ONE next question.
+- Build directly on the candidate's latest answer.
+- Do not reuse or closely paraphrase any previously asked question.
+- Keep the question natural and specific — probe understanding, tradeoffs, edge cases, or debugging.
+- Do not include feedback inside the question.
+- If requested focus is present, the question must be about that focus. Do not substitute a different resume skill.
+- If requested focus is absent, the question must be about the current resume focus.
+
+Current resume focus: ${JSON.stringify(currentFocus)}
+Requested focus: ${requestedFocus || "none"}
+Previous question: ${previousQuestion}
+Candidate answer: ${answer}
+Resume context: ${JSON.stringify(resumeContext)}
+Already asked (do NOT repeat): ${JSON.stringify(askedQuestions)}
+
+Return only the question text — no JSON, no bullets, no preamble.
+`.trim();
+
+    try {
+      const raw = await askAI(prompt);
+      const q = sanitizeQuestionText(raw);
+      if (q && !hasSimilarQuestion(q, askedQuestions) && focusAppearsInQuestion(requestedFocus, q)) return q;
+    } catch (err) {
+      console.warn("[generateInterviewQuestion] AI failed:", err.message);
+    }
+
+    return buildFocusQuestion(requestedFocus || currentFocus?.focus || "the most relevant part of your resume");
+  };
+
+  const generateEvaluationTurn = async ({ responseState, resumeContext, answer, previousQuestion, askedQuestions, recentTranscript, consecutiveMisses, currentFocus }) => {
+    const prompt = `
+You are a senior technical interviewer. Generate the next interview turn for any role dynamically.
+
+Return ONLY valid JSON:
+{
+  "feedback": "one short, natural sentence",
+  "nextQuestion": "one focused next question",
+  "shouldAdvance": false,
+  "answerQuality": "empty | incomplete | acceptable | strong | skipped | topic_switch"
+}
+
+Rules:
+- Do not invent experience the candidate denies.
+- If intent is cannot_answer and consecutiveMisses is 0, be supportive and ask a simpler conceptual version of the same topic.
+- If intent is cannot_answer and consecutiveMisses is 1 or more, skip that question and move to a different relevant area.
+- If intent is topic_switch, honor the requested focus.
+- If requestedFocus is present, the next question must be about that focus. Do not replace it with a different technology from the resume.
+- If intent is clarification_request, explain what you mean in simple terms and ask the same question in a clearer way. Do not advance.
+- If answer is incomplete, stay on the same topic and ask for a small example, reason, tradeoff, edge case, or complexity.
+- If answer is acceptable/strong, ask a deeper follow-up or move naturally.
+- Avoid hardcoded curricula. Use the job/resume context and transcript.
+- Never mention unrelated technologies that are not in the question, answer, transcript, or resume.
+- Do not repeat or closely paraphrase already asked questions.
+
+Response classification:
+${JSON.stringify(responseState)}
+
+Current resume focus: ${JSON.stringify(currentFocus)}
+Requested focus: ${responseState.requestedFocus || "none"}
+Previous question: ${previousQuestion}
+Candidate answer: ${answer}
+Consecutive cannot-answer count before this answer: ${consecutiveMisses}
+Resume context: ${JSON.stringify(resumeContext)}
+Recent transcript:
+${recentTranscript}
+Already asked questions:
+${JSON.stringify(askedQuestions)}
+`.trim();
+
+    try {
+      const response = await askAI(prompt);
+      const parsed = parseJsonFromResponse(response);
+
+      return {
+        feedback: sanitizeQuestionText(parsed.feedback),
+        nextQuestion: sanitizeQuestionText(parsed.nextQuestion),
+        shouldAdvance: typeof parsed.shouldAdvance === "boolean"
+          ? parsed.shouldAdvance
+          : responseState.shouldAdvance,
+        answerQuality: parsed.answerQuality || responseState.answerQuality
+      };
+    } catch (err) {
+      console.warn("[generateEvaluationTurn] AI failed:", err.message);
+      return {
+        feedback: responseState.intent === "cannot_answer"
+          ? "No problem; let us adjust the question."
+          : "Thanks, I have enough context to continue.",
+          nextQuestion: await generateInterviewQuestion({
+          resumeContext,
+          answer,
+          previousQuestion,
+          askedQuestions,
+          currentFocus,
+          requestedFocus: responseState.requestedFocus
+        }),
+        shouldAdvance: responseState.shouldAdvance,
+        answerQuality: responseState.answerQuality
+      };
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Auth middleware
+  // ─────────────────────────────────────────────────────────────────────────
 
   io.use(async (socket, next) => {
     try {
       const token =
         socket.handshake.auth?.token ||
         socket.handshake.headers?.authorization?.split(" ")[1];
-
-      if (!token) {
-        return next(new Error("Unauthorized"));
-      }
+      if (!token) return next(new Error("Unauthorized"));
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET || "secretkey");
       const user = await User.findById(decoded.id).select("role email");
+      if (!user) return next(new Error("Unauthorized"));
 
-      if (!user) {
-        return next(new Error("Unauthorized"));
-      }
-
-      socket.user = {
-        id: decoded.id,
-        role: user.role,
-        email: user.email
-      };
+      socket.user = { id: decoded.id, role: user.role, email: user.email };
       next();
-    } catch (err) {
+    } catch {
       next(new Error("Unauthorized"));
     }
   });
 
-  io.on("connection", (socket) => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // Connection handler
+  // ─────────────────────────────────────────────────────────────────────────
 
+  io.on("connection", (socket) => {
     console.log("User connected:", socket.id);
 
-	    let messages = [];
-	    let sessionId = null;
-	    let interviewTurn = 0;
-	    let resumeContext = {};
+    // Per-socket mutable state — ALL reset in startInterview.
+    let messages       = [];
+    let sessionId      = null;
+    let interviewTurn  = 0;
+    let resumeContext  = {};
+    let resumeInterviewPlan = [];
+    let askedQuestions = [];
+    let consecutiveApologies = 0;
 
-	    // ⭐ Prevent repeated questions
-	    let askedQuestions = [];
+    // ── FIX: reset everything before each new interview session ─────────────
+    // Without this, reconnecting or calling startInterview twice bleeds
+    // messages/askedQuestions/sessionId from the previous session.
+    const resetState = () => {
+      messages       = [];
+      sessionId      = null;
+      interviewTurn  = 0;
+      resumeContext  = {};
+      resumeInterviewPlan = [];
+      askedQuestions = [];
+      consecutiveApologies = 0;
+    };
+
+    // ── startInterview ───────────────────────────────────────────────────────
 
     socket.on("startInterview", async ({ candidateId }) => {
-
       try {
         if (socket.user?.role !== "candidate") {
           return socket.emit("error", "Only candidates can start interviews");
         }
 
         const candidate = await Candidate.findById(candidateId);
-
-        if (!candidate) {
-          return socket.emit("error", "Candidate not found");
-        }
+        if (!candidate) return socket.emit("error", "Candidate not found");
 
         const ownsByUserId =
           candidate.userId && String(candidate.userId) === String(socket.user.id);
@@ -376,258 +435,224 @@ Return only the question text.
           return socket.emit("error", "Access denied");
         }
 
+        // Reset before building new session state
+        resetState();
+
+        resumeContext = {
+          skills:     candidate.parsedResume?.skills    || [],
+          techStack:  candidate.parsedResume?.techStack || candidate.parsedResume?.tech_stack || [],
+          projects:   candidate.parsedResume?.projects  || [],
+          experience: candidate.parsedResume?.experience || [],
+          education:  candidate.parsedResume?.education  || []
+        };
+        resumeInterviewPlan = await buildResumeInterviewPlan(resumeContext);
+        const firstFocus = getPlanFocus(resumeInterviewPlan, 0);
+
+        messages = [
+          {
+            role: "system",
+            content: `
+You are a senior technical interviewer having a natural one-on-one conversation.
+
+INTERVIEW STYLE:
+- Be warm, focused, and adaptive.
+- Ask exactly one question at a time.
+- Base every next question on the candidate's latest answer.
+- If the answer is incomplete, ask a short clarifying follow-up on the same idea.
+- If the answer is strong, go a little deeper: tradeoff, edge case, or production example.
+- Only change topic when the candidate clearly switches or conversation naturally leads there.
+- Never repeat the same question.
+- Keep tone human and conversational.
+
+Candidate resume context:
+${JSON.stringify(resumeContext)}
+
+	Start with a question based only on the strongest evidence in the resume.
+	`.trim()
+          }
+        ];
+
+        const firstQuestion = await generateInterviewQuestion({
+          resumeContext,
+          answer: "",
+          previousQuestion: "",
+          askedQuestions,
+          currentFocus: firstFocus
+        });
+
+        askedQuestions.push(firstQuestion);
+        messages.push({ role: "assistant", content: firstQuestion });
+
+        // Persist session with askedQuestions so reconnect can restore them
         const session = await InterviewSession.create({
           candidateId,
-          messages: []
+          messages,
+          askedQuestions,
+          currentStage: "technical_foundation",
+          interviewTurn: 0,
+          status: "active"
         });
 
         sessionId = session._id;
 
-	        resumeContext = {
-	          skills: candidate.parsedResume?.skills || [],
-	          techStack: candidate.parsedResume?.techStack || candidate.parsedResume?.tech_stack || [],
-	          projects: candidate.parsedResume?.projects || [],
-	          experience: candidate.parsedResume?.experience || [],
-	          education: candidate.parsedResume?.education || []
-	        };
-
-	        // ⭐ Senior-level interviewer personality
-	        messages = [
-	          {
-	            role: "system",
-	            content: `
-  You are a senior technical interviewer having a natural one-on-one conversation.
-
-  INTERVIEW STYLE:
-
-  - Be warm, focused, and adaptive.
-  - Ask exactly one question at a time.
-  - Base every next question on the candidate's latest answer and the immediate prior question.
-  - Do not follow a scripted curriculum or fixed sequence.
-  - If the answer is incomplete, ask a short clarifying follow-up on the same idea.
-  - If the answer is strong, go a little deeper with a practical follow-up, edge case, or tradeoff.
-  - Only change topic when the candidate clearly switches or the conversation naturally leads there.
-  - Never repeat the same question.
-  - Keep the tone human and conversational.
-
-  Candidate resume context:
-  ${JSON.stringify(resumeContext)}
-
-  Start with a realistic interview opener based on the resume context.
-	`
-	          }
-	        ];
-
-        const firstQuestion = await generateInterviewQuestion({
-          stage: "technical_foundation",
-          resumeContext,
-          answer: "",
-          previousQuestion: "",
-          askedQuestions
-        });
-
-	        askedQuestions.push(firstQuestion);
-
-	        messages.push({
-	          role: "assistant",
-	          content: firstQuestion
-	        });
-
-	        await InterviewSession.findByIdAndUpdate(sessionId, {
-	          messages
-	        });
-
         socket.emit("aiQuestion", firstQuestion);
 
       } catch (err) {
-
-        console.log("Start Interview Error:", err);
+        console.error("[startInterview] Error:", err);
         socket.emit("error", "Interview start failed");
-
       }
-
     });
 
+    // ── candidateAnswer ──────────────────────────────────────────────────────
+
     socket.on("candidateAnswer", async ({ answer }) => {
-
       try {
-
         if (!sessionId) {
-          return socket.emit("error", "Session not initialized");
+          return socket.emit("error", "Session not initialised — please start the interview first");
         }
 
-        messages.push({
-          role: "user",
-          content: answer
+        messages.push({ role: "user", content: answer });
+
+        const previousQuestion =
+          [...messages].reverse().find((m) => m.role === "assistant")?.content || "";
+
+        const currentFocus = getPlanFocus(resumeInterviewPlan, interviewTurn);
+
+        const recentTranscript = messages
+          .slice(-8)
+          .map((m) => `${m.role}: ${m.content}`)
+          .join("\n");
+
+        const responseState = await classifyCandidateResponse({
+          answer,
+          previousQuestion,
+          currentStage: currentFocus.focus,
+          resumeContext,
+          recentTranscript
         });
 
-	        const previousQuestion = [...messages]
-	          .reverse()
-	          .find((message) => message.role === "assistant")?.content || "";
-	        const answerState = analyzeAnswer(answer);
-	        const currentStage = getInterviewStage(interviewTurn);
-	        const nextStage = answerState.requestedStage ||
-            (answerState.incomplete
-              ? currentStage
-              : getInterviewStage(interviewTurn + 1));
+        const missesBeforeThisAnswer = consecutiveApologies;
+        consecutiveApologies = responseState.intent === "cannot_answer"
+          ? consecutiveApologies + 1
+          : 0;
 
-          const recentTranscript = messages.slice(-8).map((message) => `${message.role}: ${message.content}`).join("\n");
+        if (responseState.intent === "clarification_request") {
+          consecutiveApologies = 0;
+        }
 
-          // ⭐ Senior evaluation prompt
-          const evaluationPrompt = [
-            {
-	            role: "system",
-	            content: `
-  You are a senior technical interviewer having a natural conversation.
+        const targetFocus = responseState.requestedFocus
+          ? { focus: responseState.requestedFocus, evidence: "candidate requested topic" }
+          : responseState.needsSameTopicFollowUp
+            ? currentFocus
+            : getPlanFocus(resumeInterviewPlan, interviewTurn + 1);
 
-  TASK:
-
-  - Read the candidate's latest answer carefully.
-  - Judge whether it actually addresses the previous question.
-  - If the answer is weak, partial, or an apology, stay on the same idea and ask one clarifying follow-up.
-  - If the answer is solid, ask one deeper follow-up that feels natural and specific.
-  - Use the resume context and recent transcript, but do not follow a scripted curriculum.
-  - Only change topic if the candidate clearly switches topic or the conversation naturally moves there.
-  - Avoid generic feedback.
-  - Never repeat or paraphrase an earlier question.
-  - Keep the tone human, concise, and encouraging.
-
-  IMPORTANT:
-
-  - Immediately previous question: ${previousQuestion}
-  - Candidate resume context: ${JSON.stringify(resumeContext)}
-  - Recent transcript: ${recentTranscript}
-  - Already asked questions: ${JSON.stringify(askedQuestions)}
-
-  Return ONLY valid JSON:
-
-	{
-	  "feedback": "human-like supportive feedback",
-		  "nextQuestion": "new technical question",
-      "shouldAdvance": false,
-		  "answerQuality": "incomplete | acceptable | strong"
-		}
-		`
-            },
-            ...messages.filter((message, index) => !(index === 0 && message.role === "system"))
-          ];
-
-	        let evaluation = buildFallbackEvaluation(answer, previousQuestion, nextStage, resumeContext, askedQuestions);
-
-        try {
-          const aiResponse = await askAI(evaluationPrompt);
-          console.log("AI RAW RESPONSE:", aiResponse);
-          const parsedEvaluation = parseJsonFromResponse(aiResponse);
-
-	          evaluation = {
-	            feedback: parsedEvaluation.feedback || evaluation.feedback,
-	            nextQuestion: parsedEvaluation.nextQuestion || evaluation.nextQuestion,
-              shouldAdvance: typeof parsedEvaluation.shouldAdvance === "boolean"
-                ? parsedEvaluation.shouldAdvance
-                : evaluation.shouldAdvance,
-              answerQuality: parsedEvaluation.answerQuality || evaluation.answerQuality
-	          };
-	        } catch (aiError) {
-	          console.log("Evaluation AI fallback used:", aiError.message);
-	        }
-
-          if (answerState.incomplete && !answerState.isTopicSwitch) {
-            evaluation = {
-              ...evaluation,
-              feedback: evaluation.feedback || "You have the starting idea, but the answer is still incomplete.",
-              nextQuestion: buildSameTopicFollowUp(previousQuestion, answer),
-              shouldAdvance: false,
-              answerQuality: "incomplete"
-            };
-          }
-
-        // ⭐ Prevent repeated questions (backend safety)
-	        if (
-            !evaluation.nextQuestion ||
-            (evaluation.shouldAdvance !== false && hasSimilarQuestion(evaluation.nextQuestion, askedQuestions))
-          ) {
-
-	          evaluation.nextQuestion = await generateInterviewQuestion({
-              stage: nextStage,
-              resumeContext,
-              answer,
-              previousQuestion,
-              askedQuestions
-            }) ||
-              buildContextualFallbackQuestion(answer, askedQuestions);
-
-	        }
-
-	        askedQuestions.push(evaluation.nextQuestion);
-	        if (evaluation.shouldAdvance !== false) {
-	          interviewTurn = answerState.requestedStage
-              ? getStageTurn(answerState.requestedStage)
-              : interviewTurn + 1;
-	        }
-
-        messages.push({
-          role: "assistant",
-          content: evaluation.nextQuestion
+        let evaluation = await generateEvaluationTurn({
+          responseState,
+          resumeContext,
+          answer,
+          previousQuestion,
+          askedQuestions,
+          recentTranscript,
+          consecutiveMisses: missesBeforeThisAnswer,
+          currentFocus: targetFocus
         });
 
+        if (responseState.requestedFocus && !focusAppearsInQuestion(responseState.requestedFocus, evaluation.nextQuestion)) {
+          evaluation.nextQuestion = buildFocusQuestion(responseState.requestedFocus);
+        }
+
+        if (responseState.intent === "clarification_request") {
+          evaluation.shouldAdvance = false;
+          evaluation.answerQuality = "incomplete";
+        }
+
+        if (responseState.intent === "cannot_answer" && missesBeforeThisAnswer >= 1) {
+          evaluation.shouldAdvance = true;
+          evaluation.answerQuality = "skipped";
+          consecutiveApologies = 0;
+        }
+
+        // Safety net: regenerate if next question is missing or a duplicate
+        if (
+          !evaluation.nextQuestion ||
+          (evaluation.shouldAdvance !== false &&
+            hasSimilarQuestion(evaluation.nextQuestion, askedQuestions))
+        ) {
+          evaluation.nextQuestion = await generateInterviewQuestion({
+            resumeContext,
+            answer,
+            previousQuestion,
+            askedQuestions,
+            currentFocus: targetFocus,
+            requestedFocus: responseState.requestedFocus
+          });
+        }
+
+        evaluation.nextQuestion = sanitizeQuestionText(evaluation.nextQuestion);
+        askedQuestions.push(evaluation.nextQuestion);
+
+        // Advance turn counter
+        if (evaluation.shouldAdvance !== false) {
+          interviewTurn += 1;
+        }
+
+        messages.push({ role: "assistant", content: evaluation.nextQuestion });
+
+        // FIX: persist askedQuestions, currentStage, interviewTurn so a
+        // reconnecting socket can restore deduplication and stage state
         await InterviewSession.findByIdAndUpdate(sessionId, {
-          messages
+          messages,
+          askedQuestions,
+          currentStage: "technical_foundation",
+          interviewTurn
         });
 
         socket.emit("aiEvaluation", evaluation);
 
       } catch (err) {
-
-        console.log("Evaluation Error:", err);
+        console.error("[candidateAnswer] Error:", err);
         socket.emit("error", "AI evaluation failed");
-
       }
-
     });
 
+    // ── endInterview ─────────────────────────────────────────────────────────
+
     socket.on("endInterview", async () => {
-
       try {
+        if (!sessionId) return socket.emit("error", "Session not found");
 
-        if (!sessionId) {
-          return socket.emit("error", "Session not found");
-        }
-
-        const summaryPrompt = [
-
+        // Pass full conversation as array — askAI handles it correctly.
+        // Appending the summary system message at the end so the AI sees the
+        // full transcript and then the scoring instructions.
+        const summaryMessages = [
           ...messages,
-
           {
             role: "system",
             content: `
-	You are a senior technical interviewer.
+You are a senior technical interviewer. Analyse the full interview transcript above.
 
-	Analyze the full interview conversation.
+SCORING (0–10):
+0-2: No answers or completely irrelevant.
+3-4: Weak understanding, major gaps.
+5-6: Partially correct, some practical knowledge, needs mentoring.
+7-8: Solid, job-ready, clear reasoning and examples.
+9-10: Exceptional depth, tradeoffs, debugging, production judgment.
 
-	Score strictly from 0 to 10:
-	0-2: no answers, irrelevant answers, or unable to explain basics.
-	3-4: weak understanding with major gaps.
-	5-6: partially correct answers, some practical knowledge, needs mentoring.
-	7-8: solid job-ready understanding with clear reasoning and examples.
-	9-10: exceptional depth, tradeoffs, debugging ability, and production judgment.
+RULES:
+- Do not inflate for politeness. Short, vague, or generic answers score below 6.
+- Do not penalise grammar/typos when technical meaning is clear.
+- Reward debugging steps, correct tradeoffs, concrete examples, honest uncertainty.
 
-		Do not inflate the score for politeness. Short, vague, copied, or generic answers must score below 6.
-		Base the score only on the candidate answers in this transcript.
-		Do not penalize grammar, typos, informal wording, or non-polished phrasing if the technical meaning is clear.
-		Reward practical debugging steps, correct tradeoffs, concrete examples, and honest uncertainty.
-
-	Return ONLY valid JSON:
-
-	{
-  "strengths": "candidate strengths",
-  "weaknesses": "areas of improvement",
-  "overallFeedback": "professional final evaluation",
-	  "recommendation": "Hire or No Hire",
-	  "overallRating": 0
-	}
-	`
+Return ONLY valid JSON:
+{
+  "strengths": "2–3 sentences on candidate strengths",
+  "weaknesses": "2–3 sentences on areas of improvement",
+  "overallFeedback": "3–4 sentence professional final evaluation",
+  "recommendation": "Hire or No Hire",
+  "overallRating": 0
+}
+`.trim()
           }
-
         ];
 
         let finalSummary = buildFallbackSummary();
@@ -636,76 +661,91 @@ Return only the question text.
           let parsedSummary;
 
           try {
-            const aiResponse = await askAI(summaryPrompt);
+            const aiResponse = await askAI(summaryMessages);
             parsedSummary = parseJsonFromResponse(aiResponse);
-          } catch (primarySummaryError) {
-            console.log("Primary summary failed, retrying compact prompt:", primarySummaryError.message);
+          } catch (primaryErr) {
+            console.warn("[endInterview] Primary summary failed, trying compact prompt:", primaryErr.message);
+
+            // Compact retry: plain string prompt with last 12 messages only
+            const compactTranscript = messages
+              .filter((m) => m.role !== "system")
+              .slice(-12)
+              .map((m) => `${m.role}: ${m.content}`)
+              .join("\n");
 
             const compactPrompt = `
-	You are a senior technical interviewer.
-	Return ONLY valid JSON with exactly these keys:
-	{
+You are a senior technical interviewer.
+Return ONLY valid JSON — no markdown, no extra text:
+{
   "strengths": "",
   "weaknesses": "",
   "overallFeedback": "",
   "recommendation": "Hire or No Hire",
-	  "overallRating": 0
-	}
+  "overallRating": 0
+}
 
-	Use a strict 0 to 10 overallRating. Short, vague, irrelevant, or mostly incorrect answers must be below 6.
-	Ignore grammar and typos when the candidate's technical intent is understandable.
+Strict 0–10 overallRating. Short or vague answers score below 6.
+Ignore grammar if technical meaning is clear.
 
-	Interview transcript:
-	${messages.slice(-12).map((m) => `${m.role}: ${m.content}`).join("\n")}
-`;
+Transcript:
+${compactTranscript}
+`.trim();
 
             const retryResponse = await askAI(compactPrompt);
             parsedSummary = parseJsonFromResponse(retryResponse);
           }
 
-          const normalizedRating = normalizeRating(parsedSummary.overallRating);
-          const totalScore = Math.round(normalizedRating * 10);
-          const questionCount = messages.filter((m) => m.role === "assistant").length;
-          const normalizedRecommendation = recommendationFromRating(normalizedRating);
+          const overallRating  = normalizeRating(parsedSummary.overallRating);
+          const totalScore     = Math.round(overallRating * 10);
+          const questionCount  = messages.filter((m) => m.role === "assistant").length;
 
           finalSummary = {
-            strengths: parsedSummary.strengths || finalSummary.strengths,
-            weaknesses: parsedSummary.weaknesses || finalSummary.weaknesses,
+            strengths:       parsedSummary.strengths       || finalSummary.strengths,
+            weaknesses:      parsedSummary.weaknesses      || finalSummary.weaknesses,
             overallFeedback: parsedSummary.overallFeedback || finalSummary.overallFeedback,
-            recommendation: normalizedRecommendation,
-            overallRating: normalizedRating
+            recommendation:  recommendationFromRating(overallRating),
+            overallRating
           };
 
           await InterviewSession.findByIdAndUpdate(sessionId, {
             finalSummary,
             totalScore,
-            questionCount
+            questionCount,
+            status: "completed"
           });
 
           return socket.emit("finalSummary", finalSummary);
+
         } catch (summaryErr) {
-          console.log("Summary Parse Error:", summaryErr.message);
+          console.warn("[endInterview] Summary error:", summaryErr.message);
         }
 
         await InterviewSession.findByIdAndUpdate(sessionId, {
-          finalSummary
+          finalSummary,
+          status: "completed"
         });
 
         socket.emit("finalSummary", finalSummary);
 
       } catch (err) {
-
-        console.log("Summary Error:", err);
+        console.error("[endInterview] Error:", err);
         socket.emit("error", "Final summary generation failed");
-
       }
-
     });
 
-    socket.on("disconnect", () => {
+    // ── disconnect ────────────────────────────────────────────────────────────
 
+    socket.on("disconnect", async () => {
       console.log("User disconnected:", socket.id);
-
+      if (sessionId) {
+        try {
+          // Only mark abandoned if interview never completed
+          await InterviewSession.findOneAndUpdate(
+            { _id: sessionId, status: "active" },
+            { status: "abandoned" }
+          );
+        } catch (_) { /* best-effort */ }
+      }
     });
 
   });

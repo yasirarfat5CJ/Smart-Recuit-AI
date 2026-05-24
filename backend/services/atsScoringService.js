@@ -104,6 +104,32 @@ const knownSkillTerms = [
   ])
 ].sort((a, b) => b.length - a.length);
 
+const genericRequirementTerms = [
+  "authentication",
+  "authorization",
+  "deployment",
+  "debugging",
+  "testing",
+  "unit testing",
+  "integration testing",
+  "performance",
+  "optimization",
+  "scalability",
+  "security",
+  "responsive design",
+  "state management",
+  "database design",
+  "schema design",
+  "vector search",
+  "semantic search",
+  "embeddings",
+  "prompt engineering",
+  "error handling",
+  "logging",
+  "monitoring",
+  "caching"
+];
+
 const containsSkillTerm = (text, term) => {
   const pattern = new RegExp(`(^|\\s)${escapeRegex(term)}(?=\\s|$)`);
   return pattern.test(text);
@@ -119,7 +145,8 @@ const extractKnownSkills = (value) => {
   const normalized = normalizeSkill(value);
   if (!normalized) return [];
 
-  return knownSkillTerms.filter((term) => containsSkillTerm(normalized, term));
+  return [...knownSkillTerms, ...genericRequirementTerms]
+    .filter((term) => containsSkillTerm(normalized, term));
 };
 
 const buildSkillSet = (value) => {

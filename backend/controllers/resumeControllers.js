@@ -3,115 +3,101 @@ const Candidate = require("../models/Candidate");
 const Job = require("../models/job");
 const calculateATSScore = require("../services/atsScoringService");
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Shape returned when AI parsing completely fails. */
+const buildFallbackResume = (user) => ({
+  name: user?.name || "",
+  email: user?.email || "",
+  phone: "",
+  skills: [],
+  techStack: [],
+  experience: [],
+  experienceYears: 0,
+  projects: [],
+  education: []
+  // Note: no rawText — ATS scorer handles undefined gracefully
+});
+
+// ---------------------------------------------------------------------------
+// Controller
+// ---------------------------------------------------------------------------
+
 const uploadResume = async (req, res) => {
-
   try {
-
+    // ── Validate inputs ────────────────────────────────────────────────────
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
     const { jobId } = req.body;
-
     if (!jobId) {
-      return res.status(400).json({ message: "Job ID required" });
+      return res.status(400).json({ message: "Job ID is required" });
     }
 
     const job = await Job.findById(jobId);
-
     if (!job) {
       return res.status(404).json({ message: "Job not found" });
     }
 
-    const filePath = req.file.path;
+    // ── Step 1: Parse resume ───────────────────────────────────────────────
+    // parseResume returns a plain JS object — no JSON string, no double-parse.
+    // The object includes `rawText` for ATS scoring (in-memory only).
+    let parsedResume;
     let fallbackUsed = false;
-    let parsedJson;
-
-    const fallbackParsedJson = {
-      name: req.user?.name || "",
-      skills: [],
-      experience: [],
-      projects: [],
-      education: [],
-      techStack: [],
-      experienceYears: 0
-    };
 
     try {
-      // Step 1 — AI structured parsing
-      const structuredResume = await parseResume(filePath);
-
-      console.log("RAW AI RESPONSE:\n", structuredResume);
-
-      // Step 2 — Safe JSON parsing
-      try {
-
-        const cleanJsonString = structuredResume
-          .replace(/```json/g, "")
-          .replace(/```/g, "")
-          .trim();
-
-        parsedJson = JSON.parse(cleanJsonString);
-
-      } catch (err) {
-
-        console.log("Direct parse failed. Trying extraction...");
-
-        const jsonMatch = String(structuredResume || "").match(/\{[\s\S]*\}/);
-
-        if (!jsonMatch) {
-          throw new Error("No valid JSON found in AI response");
-        }
-
-        parsedJson = JSON.parse(jsonMatch[0]);
-      }
+      parsedResume = await parseResume(req.file.path);
     } catch (parseError) {
-      console.log("Resume AI parse fallback used:", parseError.message);
-      parsedJson = fallbackParsedJson;
+      console.warn("[uploadResume] Resume parsing failed, using fallback:", parseError.message);
+      parsedResume = buildFallbackResume(req.user);
       fallbackUsed = true;
     }
 
-    if (!parsedJson || typeof parsedJson !== "object") {
-      parsedJson = fallbackParsedJson;
+    if (!parsedResume || typeof parsedResume !== "object") {
+      parsedResume = buildFallbackResume(req.user);
       fallbackUsed = true;
     }
 
-    if (!Array.isArray(parsedJson.skills)) parsedJson.skills = [];
-    if (!Array.isArray(parsedJson.experience)) parsedJson.experience = [];
-    if (!Array.isArray(parsedJson.projects)) parsedJson.projects = [];
-    if (!Array.isArray(parsedJson.education)) parsedJson.education = [];
-    if (!Array.isArray(parsedJson.techStack)) {
-      parsedJson.techStack = Array.isArray(parsedJson.tech_stack) ? parsedJson.tech_stack : [];
-    }
+    // Fill in user identity if AI missed it
+    if (!parsedResume.name && req.user?.name) parsedResume.name = req.user.name;
+    if (!parsedResume.email && req.user?.email) parsedResume.email = req.user.email;
 
-    // Step 3 — Calculate ATS score
+    // ── Step 2: Calculate ATS score ────────────────────────────────────────
+    // rawText is still on parsedResume here — atsScoringService uses it for
+    // full-text skill matching. We strip it before DB save below.
     let atsScore = 0;
     try {
-      atsScore = await calculateATSScore(parsedJson, job);
+      atsScore = await calculateATSScore(parsedResume, job);
     } catch (scoreError) {
-      console.log("ATS score fallback used:", scoreError.message);
+      console.warn("[uploadResume] ATS scoring failed, defaulting to 0:", scoreError.message);
     }
 
-    // Step 4 — Save candidate
+    // ── Step 3: Strip rawText before persisting ────────────────────────────
+    // rawText can be thousands of characters — storing it in MongoDB bloats
+    // every document and risks hitting the 16 MB document size limit.
+    delete parsedResume.rawText;
+
+    // ── Step 4: Save candidate ─────────────────────────────────────────────
     const candidate = await Candidate.create({
       userId: req.user?._id || null,
-      name: parsedJson.name || "",
-      email: req.user?.email || parsedJson.email || "",
-      parsedResume: parsedJson,
+      name: parsedResume.name || "",
+      email: parsedResume.email || req.user?.email || "",
+      parsedResume,
       atsScore
     });
 
-    res.json({
+    return res.json({
       message: "Candidate saved successfully",
       candidate,
       fallbackUsed
     });
 
   } catch (error) {
-
-    console.error(error);
-    res.status(500).json({ message: error.message });
-
+    console.error("[uploadResume] Unexpected error:", error);
+    return res.status(500).json({ message: error.message || "Internal server error" });
   }
 };
 

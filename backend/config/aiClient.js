@@ -1,5 +1,5 @@
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
 const formatMessagesForGroq = (messages) => {
   return messages.map((msg) => ({
@@ -62,7 +62,8 @@ const askAI = async (prompt) => {
         },
         body: JSON.stringify({
           model: GROQ_MODEL,
-          messages
+          messages,
+          temperature: 0.3
         })
       });
 

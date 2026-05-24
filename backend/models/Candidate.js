@@ -1,43 +1,46 @@
-const mongoose=require('mongoose')
-const { stream } = require('pdf-parse-new')
+const mongoose = require("mongoose");
 
-const candidateSchema=new mongoose.Schema(
-    {
-        userId:{
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "User",
-            default: null
-        },
-        name:{
-            type:String,
-            default:"",
-        },
-        email:{
-            type:String,
-            default:""
-        },
-        parsedResume:{
-            type:Object,
-            required:true
-        },
-        atsScore:{
-            type:Number,
-            default:0,
-        },
-        interviewStatus:{
-            type:String,
-            default:"pending",
-        },
-        isArchivedByHR: {
-            type: Boolean,
-            default: false
-        },
-        archivedAt: {
-            type: Date,
-            default: null
-        }
+const candidateSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null
     },
-    {timestamps:true}
+    name: {
+      type: String,
+      default: ""
+    },
+    email: {
+      type: String,
+      default: ""
+    },
+    // Structured resume data — rawText is intentionally excluded to keep
+    // documents small. ATS scoring uses it in-memory during upload only.
+    parsedResume: {
+      type: Object,
+      required: true
+    },
+    atsScore: {
+      type: Number,
+      default: 0
+    },
+    interviewStatus: {
+      type: String,
+      enum: ["pending", "in_progress", "completed"],
+      default: "pending"
+    },
+    isArchivedByHR: {
+      type: Boolean,
+      default: false
+    },
+    archivedAt: {
+      type: Date,
+      default: null
+    }
+  },
+  { timestamps: true }
 );
 
-module.exports=mongoose.model("candidate",candidateSchema)
+// "Candidate" (capital C) must match ref: "Candidate" in interviewSession.js
+module.exports = mongoose.model("Candidate", candidateSchema);
