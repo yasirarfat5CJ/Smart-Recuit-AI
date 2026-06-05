@@ -26,11 +26,20 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage: storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype !== "application/pdf") {
+      return cb(new Error("Only PDF resumes are supported"));
+    }
+    cb(null, true);
+  }
+});
 router.post('/upload', protect, authorizeRoles("candidate"), (req, res, next) => {
   upload.single("resume")(req, res, (error) => {
     if (error) {
-      return res.status(500).json({ message: `Resume upload failed: ${error.message}` });
+      return res.status(400).json({ message: `Resume upload failed: ${error.message}` });
     }
     next();
   });

@@ -25,18 +25,18 @@ const candidateSchema = new mongoose.Schema(
       type: Number,
       default: 0
     },
+    atsBreakdown: {
+      type: Object,
+      default: {}
+    },
+    atsSuggestions: {
+      type: [String],
+      default: []
+    },
     interviewStatus: {
       type: String,
       enum: ["pending", "in_progress", "completed"],
       default: "pending"
-    },
-    isArchivedByHR: {
-      type: Boolean,
-      default: false
-    },
-    archivedAt: {
-      type: Date,
-      default: null
     }
   },
   { timestamps: true }

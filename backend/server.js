@@ -12,8 +12,7 @@ const cors = require('cors');
 const connectDb = require('./config/db');
 const askAI = require('./config/aiClient');
 const resumeRoutes = require("./routes/resumeRoutes");
-const jobRoutes = require("./routes/jobRoutes");
-const hrRoutes = require("./routes/hrRoutes");
+const studentRoutes = require("./routes/studentRoutes");
 const authRoutes=require("./routes/authRoutes")
 // 3. Initialize Socket.io using the lowercase 'server' variable
 const io = new SocketServer(server, {
@@ -29,8 +28,7 @@ app.use(express.json());
 app.use(cors());
 
 app.use("/api/resume", resumeRoutes);
-app.use("/api/jobs", jobRoutes);
-app.use("/api/hr", hrRoutes);
+app.use("/api/student", studentRoutes);
 app.use("/api/auth",authRoutes);
 
 
@@ -38,7 +36,7 @@ app.use("/api/auth",authRoutes);
 connectDb();
 
 app.get('/', (req, res) => {
-    res.send("Smart Recruit AI Backend is Running");
+    res.send("Interview Prep AI Backend is Running");
 });
 
 app.get('/task-ai', async (req, res) => {

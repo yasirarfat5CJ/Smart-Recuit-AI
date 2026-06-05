@@ -7,6 +7,11 @@ const interviewSessionSchema = new mongoose.Schema(
       ref: "Candidate",   // must match mongoose.model("Candidate", ...) exactly
       required: true
     },
+    interviewType: {
+      type: String,
+      enum: ["project", "technical", "hr"],
+      default: "technical"
+    },
 
     messages: [
       {
@@ -64,9 +69,9 @@ const interviewSessionSchema = new mongoose.Schema(
       strengths: String,
       weaknesses: String,
       overallFeedback: String,
-      recommendation: {
+      readinessLevel: {
         type: String,
-        enum: ["Hire", "No Hire"]
+        enum: ["Needs Practice", "Developing", "Interview Ready"]
       },
       overallRating: Number
     },

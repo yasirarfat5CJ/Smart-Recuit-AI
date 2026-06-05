@@ -8,7 +8,7 @@ exports.register = async (req,res)=>{
 
   try{
 
-    const { name,email,password,role } = req.body;
+    const { name,email,password } = req.body;
 
     const existingUser = await User.findOne({ email });
 
@@ -18,13 +18,11 @@ exports.register = async (req,res)=>{
 
     const hashedPassword = await bcrypt.hash(password,10);
 
-    const safeRole = role === "hr" ? "hr" : "candidate";
-
     const user = await User.create({
       name,
       email,
       password: hashedPassword,
-      role: safeRole
+      role: "candidate"
     });
 
     res.status(201).json({
@@ -63,6 +61,11 @@ exports.login = async (req,res)=>{
 
     if(!isMatch){
       return res.status(400).json({ message:"Invalid credentials"});
+    }
+
+    if (user.role !== "candidate") {
+      user.role = "candidate";
+      await user.save();
     }
 
     const token = jwt.sign(

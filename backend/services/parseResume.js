@@ -89,6 +89,7 @@ FORMAT:
   "name": "",
   "email": "",
   "phone": "",
+  "summary": "",
   "skills": ["flat list of technical skills"],
   "techStack": ["frameworks, databases, cloud tools, libraries"],
   "experience": [

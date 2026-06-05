@@ -52,6 +52,42 @@ module.exports = (io) => {
   const buildFocusQuestion = (focus) =>
     `Can you explain ${focus} based on what you mentioned in your resume?`;
 
+  const parseCandidateControl = (answer) => {
+    const text = String(answer || "").trim();
+    const normalized = text.toLowerCase().replace(/\s+/g, " ");
+    const asksClarification = /\?/.test(text) ||
+      /\b(what do you mean|can you explain|could you explain|clarify|meaning|what is a concrete example)\b/i.test(normalized);
+    const cannotAnswer = /^(sorry|sor+ry|no|i don'?t know|i do not know|not sure|skip|pass)[.! ]*$/i.test(normalized) ||
+      /\b(i did not|i didn't|didn'?t apply|didn'?t use|cannot answer|can'?t answer|don'?t remember|do not remember)\b/i.test(normalized);
+    const requestsSwitch = /\b(switch|jump|move|go|change|next)\b.*\b(topic|project|projects|dsa|oops|subject|subjects|area|question|questions)\b/i.test(normalized) ||
+      /\b(another|other|next)\s+project\b/i.test(normalized);
+
+    if (asksClarification) {
+      return { intent: "clarification_request", requestedFocus: null };
+    }
+
+    if (requestsSwitch) {
+      const explicitFocus = normalized.match(/\b(?:to|into)\s+(.+)$/i)?.[1]
+        ?.replace(/\bquestions?\b/gi, "")
+        .trim();
+      const wantsAnotherProject = /\b(project|projects)\b/i.test(normalized);
+
+      return {
+        intent: "topic_switch",
+        requestedFocus: explicitFocus && !/^(another|other|next)?\s*projects?$/.test(explicitFocus)
+          ? explicitFocus
+          : null,
+        requestedCategory: wantsAnotherProject ? "project" : null
+      };
+    }
+
+    if (cannotAnswer) {
+      return { intent: "cannot_answer", requestedFocus: null };
+    }
+
+    return null;
+  };
+
   const parseJsonFromResponse = (raw) => {
     if (!raw || !String(raw).trim()) throw new Error("Empty AI response");
     const cleaned = String(raw).replace(/```json/gi, "").replace(/```/g, "").trim();
@@ -76,7 +112,11 @@ module.exports = (io) => {
     return Math.max(0, Math.min(10, n));
   };
 
-  const recommendationFromRating = (r) => (r >= 7 ? "Hire" : "No Hire");
+  const readinessFromRating = (rating) => {
+    if (rating >= 7) return "Interview Ready";
+    if (rating >= 5) return "Developing";
+    return "Needs Practice";
+  };
 
   const compactText = (value, max = 180) =>
     String(value || "")
@@ -90,36 +130,52 @@ module.exports = (io) => {
     return compactText(project.title || project.name || project.description);
   };
 
-  const buildResumeInterviewPlan = async (resumeContext = {}) => {
-    const fallbackTopics = [
+  const buildResumeInterviewPlan = async (resumeContext = {}, interviewType = "technical") => {
+    const allTopics = [
       ...(resumeContext.projects || []).map((project) => ({
         focus: getProjectTitle(project),
         evidence: project,
-        reason: "listed resume project"
+        reason: "listed resume project",
+        category: "project"
       })),
       ...(resumeContext.experience || []).map((item) => ({
         focus: compactText(item.role || item.title || item.company || item.description),
         evidence: item,
-        reason: "listed experience"
+        reason: "listed experience",
+        category: "experience"
       })),
       ...(resumeContext.skills || []).map((skill) => ({
         focus: compactText(skill),
         evidence: skill,
-        reason: "listed skill"
+        reason: "listed skill",
+        category: "skill"
       })),
       ...(resumeContext.techStack || []).map((skill) => ({
         focus: compactText(skill),
         evidence: skill,
-        reason: "listed technology"
+        reason: "listed technology",
+        category: "skill"
+      })),
+      ...(resumeContext.education || []).map((item) => ({
+        focus: compactText(item.degree || item.institution || item),
+        evidence: item,
+        reason: "listed education",
+        category: "education"
       }))
     ].filter((item) => item.focus);
 
+    const fallbackTopics = interviewType === "project"
+      ? allTopics.filter((item) => item.category === "project")
+      : interviewType === "technical"
+        ? allTopics.filter((item) => ["skill", "project"].includes(item.category))
+        : allTopics.filter((item) => ["project", "experience", "education"].includes(item.category));
+
     const fallbackPlan = fallbackTopics.length
       ? fallbackTopics.slice(0, 12)
-      : [{ focus: "the candidate's resume", evidence: resumeContext, reason: "resume overview" }];
+      : [{ focus: "the candidate's resume", evidence: resumeContext, reason: "resume overview", category: "skill" }];
 
     const prompt = `
-Create a dynamic interview plan using ONLY this parsed resume.
+Create a ${interviewType} interview plan using ONLY this parsed resume.
 
 Return ONLY valid JSON:
 {
@@ -127,12 +183,17 @@ Return ONLY valid JSON:
     {
       "focus": "specific resume topic/project/skill",
       "evidence": "short reason from resume",
-      "whyAsk": "what this topic helps evaluate"
+      "whyAsk": "what this topic helps evaluate",
+      "category": "project | experience | skill | education"
     }
   ]
 }
 
 Rules:
+- Interview mode is "${interviewType}".
+- Project mode must use only listed projects and their technologies.
+- Technical mode must use only listed skills, technologies, and technical project evidence.
+- HR mode must ask behavioral questions tied to listed projects, education, or experience.
 - Do not add generic interview sections unless they appear in the resume.
 - Do not invent skills, projects, companies, or tools.
 - Prefer concrete projects, experience items, and strongest resume skills.
@@ -151,12 +212,21 @@ ${JSON.stringify(resumeContext)}
           .map((topic) => ({
             focus: compactText(topic.focus),
             evidence: compactText(topic.evidence || topic.reason || topic.whyAsk),
-            reason: compactText(topic.whyAsk || topic.reason || topic.evidence)
+            reason: compactText(topic.whyAsk || topic.reason || topic.evidence),
+            category: ["project", "experience", "skill", "education"].includes(topic.category)
+              ? topic.category
+              : "skill"
           }))
           .filter((topic) => topic.focus)
         : [];
 
-      return topics.length ? topics.slice(0, 12) : fallbackPlan;
+      const modeTopics = topics.filter((topic) => {
+        if (interviewType === "project") return topic.category === "project";
+        if (interviewType === "technical") return ["project", "skill"].includes(topic.category);
+        return ["project", "experience", "education"].includes(topic.category);
+      });
+
+      return modeTopics.length ? modeTopics.slice(0, 12) : fallbackPlan;
     } catch (error) {
       console.warn("[buildResumeInterviewPlan] AI failed:", error.message);
       return fallbackPlan;
@@ -166,20 +236,39 @@ ${JSON.stringify(resumeContext)}
   const getPlanFocus = (plan, turn) =>
     plan.length ? plan[Math.min(turn, plan.length - 1)] : { focus: "the candidate's resume" };
 
+  const getNextPlanFocus = (plan, currentFocus, turn, category = null) => {
+    const current = normalizeQuestion(currentFocus?.focus);
+    const candidates = category === "project"
+      ? plan.filter((item) => item.category === "project")
+      : plan;
+    const currentIndex = candidates.findIndex((item) => normalizeQuestion(item.focus) === current);
+    const next = candidates
+      .slice(currentIndex >= 0 ? currentIndex + 1 : 0)
+      .find((item) => normalizeQuestion(item.focus) !== current);
+    return next || getPlanFocus(plan, turn + 1);
+  };
+
   const createLocalResponseState = (answer) => {
     const text = String(answer || "").trim();
     const words = text.split(/\s+/).filter(Boolean);
-    const asksClarification = /\?/.test(text) ||
-      /\b(what do you mean|can you explain|could you explain|clarify|example|concrete example|meaning)\b/i.test(text);
+    const control = parseCandidateControl(answer);
+    const asksClarification = control?.intent === "clarification_request";
 
     return {
       wordCount: words.length,
-      intent: asksClarification ? "clarification_request" : "answer",
-      requestedFocus: null,
+      intent: control?.intent || "answer",
+      requestedFocus: control?.requestedFocus || null,
+      requestedCategory: control?.requestedCategory || null,
       answerQuality: words.length < 18 ? "incomplete" : "acceptable",
-      shouldAdvance: asksClarification ? false : words.length >= 18,
-      needsSameTopicFollowUp: asksClarification || words.length < 18,
-      feedbackIntent: asksClarification ? "clarify_question" : words.length < 18 ? "needs_more_detail" : "acknowledge",
+      shouldAdvance: control?.intent === "topic_switch" || (!control && words.length >= 18),
+      needsSameTopicFollowUp: asksClarification || (!control && words.length < 18),
+      feedbackIntent: control?.intent === "topic_switch"
+        ? "switch_topic"
+        : control?.intent === "cannot_answer"
+          ? "honest_gap"
+          : asksClarification
+            ? "clarify_question"
+            : words.length < 18 ? "needs_more_detail" : "acknowledge",
       confidence: 0.4
     };
   };
@@ -188,7 +277,7 @@ ${JSON.stringify(resumeContext)}
     strengths: "Good effort throughout the interview.",
     weaknesses: "Could not generate a detailed AI summary.",
     overallFeedback: "Please retry or review the chat transcript manually.",
-    recommendation: "No Hire",
+    readinessLevel: "Needs Practice",
     overallRating: 0
   });
 
@@ -198,8 +287,9 @@ ${JSON.stringify(resumeContext)}
 
   const classifyCandidateResponse = async ({ answer, previousQuestion, currentStage, resumeContext, recentTranscript }) => {
     const fallback = createLocalResponseState(answer);
+    const localControl = parseCandidateControl(answer);
     const prompt = `
-Classify a candidate's latest interview response for a dynamic technical interview.
+Classify a student's latest response in a dynamic practice interview.
 
 Return ONLY valid JSON:
 {
@@ -234,10 +324,12 @@ Candidate answer: ${answer}
 
       return {
         ...fallback,
-        intent: ["answer", "cannot_answer", "topic_switch", "clarification_request"].includes(parsed.intent)
+        intent: localControl?.intent || (["answer", "cannot_answer", "topic_switch", "clarification_request"].includes(parsed.intent)
           ? parsed.intent
-          : fallback.intent,
-        requestedFocus: parsed.requestedFocus ? sanitizeQuestionText(parsed.requestedFocus) : null,
+          : fallback.intent),
+        requestedFocus: localControl?.requestedFocus ||
+          (parsed.requestedFocus ? sanitizeQuestionText(parsed.requestedFocus) : null),
+        requestedCategory: localControl?.requestedCategory || null,
         answerQuality: ["empty", "incomplete", "acceptable", "strong"].includes(parsed.answerQuality)
           ? parsed.answerQuality
           : fallback.answerQuality,
@@ -267,6 +359,7 @@ Rules:
 - Keep the question natural and specific — probe understanding, tradeoffs, edge cases, or debugging.
 - Do not include feedback inside the question.
 - If requested focus is present, the question must be about that focus. Do not substitute a different resume skill.
+- If requested focus is a broad area such as DSA, OOPS, databases, or system design, mention that area explicitly in the question.
 - If requested focus is absent, the question must be about the current resume focus.
 
 Current resume focus: ${JSON.stringify(currentFocus)}
@@ -292,7 +385,7 @@ Return only the question text — no JSON, no bullets, no preamble.
 
   const generateEvaluationTurn = async ({ responseState, resumeContext, answer, previousQuestion, askedQuestions, recentTranscript, consecutiveMisses, currentFocus }) => {
     const prompt = `
-You are a senior technical interviewer. Generate the next interview turn for any role dynamically.
+You are an adaptive interview coach. Generate the next interview turn dynamically.
 
 Return ONLY valid JSON:
 {
@@ -399,6 +492,8 @@ ${JSON.stringify(askedQuestions)}
     let resumeInterviewPlan = [];
     let askedQuestions = [];
     let consecutiveApologies = 0;
+    let activeFocus = null;
+    let interviewType = "technical";
 
     // ── FIX: reset everything before each new interview session ─────────────
     // Without this, reconnecting or calling startInterview twice bleeds
@@ -411,11 +506,13 @@ ${JSON.stringify(askedQuestions)}
       resumeInterviewPlan = [];
       askedQuestions = [];
       consecutiveApologies = 0;
+      activeFocus = null;
+      interviewType = "technical";
     };
 
     // ── startInterview ───────────────────────────────────────────────────────
 
-    socket.on("startInterview", async ({ candidateId }) => {
+    socket.on("startInterview", async ({ candidateId, interviewType: requestedType }) => {
       try {
         if (socket.user?.role !== "candidate") {
           return socket.emit("error", "Only candidates can start interviews");
@@ -437,6 +534,9 @@ ${JSON.stringify(askedQuestions)}
 
         // Reset before building new session state
         resetState();
+        interviewType = ["project", "technical", "hr"].includes(requestedType)
+          ? requestedType
+          : "technical";
 
         resumeContext = {
           skills:     candidate.parsedResume?.skills    || [],
@@ -445,14 +545,29 @@ ${JSON.stringify(askedQuestions)}
           experience: candidate.parsedResume?.experience || [],
           education:  candidate.parsedResume?.education  || []
         };
-        resumeInterviewPlan = await buildResumeInterviewPlan(resumeContext);
+
+        if (interviewType === "project" && resumeContext.projects.length === 0) {
+          return socket.emit("error", "Add at least one project to your resume before starting project practice.");
+        }
+
+        if (
+          interviewType === "technical" &&
+          resumeContext.skills.length === 0 &&
+          resumeContext.techStack.length === 0 &&
+          resumeContext.projects.length === 0
+        ) {
+          return socket.emit("error", "Add technical skills or projects to your resume before starting technical practice.");
+        }
+
+        resumeInterviewPlan = await buildResumeInterviewPlan(resumeContext, interviewType);
         const firstFocus = getPlanFocus(resumeInterviewPlan, 0);
+        activeFocus = firstFocus;
 
         messages = [
           {
             role: "system",
             content: `
-You are a senior technical interviewer having a natural one-on-one conversation.
+You are conducting a ${interviewType} practice interview with a student.
 
 INTERVIEW STYLE:
 - Be warm, focused, and adaptive.
@@ -463,6 +578,10 @@ INTERVIEW STYLE:
 - Only change topic when the candidate clearly switches or conversation naturally leads there.
 - Never repeat the same question.
 - Keep tone human and conversational.
+- Stay strictly within the uploaded resume. Never invent a skill, project, role, or achievement.
+- In project mode, ask only about listed projects and their implementation.
+- In technical mode, ask only about listed skills, technologies, and technical project evidence.
+- In HR mode, ask behavioral questions anchored to listed projects, education, or experience.
 
 Candidate resume context:
 ${JSON.stringify(resumeContext)}
@@ -486,6 +605,7 @@ ${JSON.stringify(resumeContext)}
         // Persist session with askedQuestions so reconnect can restore them
         const session = await InterviewSession.create({
           candidateId,
+          interviewType,
           messages,
           askedQuestions,
           currentStage: "technical_foundation",
@@ -516,7 +636,7 @@ ${JSON.stringify(resumeContext)}
         const previousQuestion =
           [...messages].reverse().find((m) => m.role === "assistant")?.content || "";
 
-        const currentFocus = getPlanFocus(resumeInterviewPlan, interviewTurn);
+        const currentFocus = activeFocus || getPlanFocus(resumeInterviewPlan, interviewTurn);
 
         const recentTranscript = messages
           .slice(-8)
@@ -540,22 +660,49 @@ ${JSON.stringify(resumeContext)}
           consecutiveApologies = 0;
         }
 
-        const targetFocus = responseState.requestedFocus
+        const switchFocus = responseState.requestedFocus
           ? { focus: responseState.requestedFocus, evidence: "candidate requested topic" }
-          : responseState.needsSameTopicFollowUp
-            ? currentFocus
-            : getPlanFocus(resumeInterviewPlan, interviewTurn + 1);
+          : responseState.intent === "topic_switch"
+            ? getNextPlanFocus(resumeInterviewPlan, currentFocus, interviewTurn, responseState.requestedCategory)
+            : null;
 
-        let evaluation = await generateEvaluationTurn({
-          responseState,
-          resumeContext,
-          answer,
-          previousQuestion,
-          askedQuestions,
-          recentTranscript,
-          consecutiveMisses: missesBeforeThisAnswer,
-          currentFocus: targetFocus
-        });
+        const targetFocus = switchFocus ||
+          (responseState.intent === "cannot_answer"
+            ? missesBeforeThisAnswer === 0
+              ? currentFocus
+              : getNextPlanFocus(resumeInterviewPlan, currentFocus, interviewTurn)
+            : responseState.needsSameTopicFollowUp
+            ? currentFocus
+            : getNextPlanFocus(resumeInterviewPlan, currentFocus, interviewTurn));
+
+        let evaluation;
+
+        if (responseState.intent === "topic_switch") {
+          evaluation = {
+            feedback: "Sure, let us switch topics.",
+            nextQuestion: await generateInterviewQuestion({
+              resumeContext,
+              answer: "",
+              previousQuestion: "",
+              askedQuestions,
+              currentFocus: targetFocus,
+              requestedFocus: targetFocus.focus
+            }),
+            shouldAdvance: true,
+            answerQuality: "topic_switch"
+          };
+        } else {
+          evaluation = await generateEvaluationTurn({
+            responseState,
+            resumeContext,
+            answer,
+            previousQuestion,
+            askedQuestions,
+            recentTranscript,
+            consecutiveMisses: missesBeforeThisAnswer,
+            currentFocus: targetFocus
+          });
+        }
 
         if (responseState.requestedFocus && !focusAppearsInQuestion(responseState.requestedFocus, evaluation.nextQuestion)) {
           evaluation.nextQuestion = buildFocusQuestion(responseState.requestedFocus);
@@ -570,6 +717,14 @@ ${JSON.stringify(resumeContext)}
           evaluation.shouldAdvance = true;
           evaluation.answerQuality = "skipped";
           consecutiveApologies = 0;
+          evaluation.nextQuestion = await generateInterviewQuestion({
+            resumeContext,
+            answer: "",
+            previousQuestion: "",
+            askedQuestions,
+            currentFocus: targetFocus,
+            requestedFocus: targetFocus.focus
+          });
         }
 
         // Safety net: regenerate if next question is missing or a duplicate
@@ -595,6 +750,7 @@ ${JSON.stringify(resumeContext)}
         if (evaluation.shouldAdvance !== false) {
           interviewTurn += 1;
         }
+        activeFocus = targetFocus;
 
         messages.push({ role: "assistant", content: evaluation.nextQuestion });
 
@@ -629,13 +785,13 @@ ${JSON.stringify(resumeContext)}
           {
             role: "system",
             content: `
-You are a senior technical interviewer. Analyse the full interview transcript above.
+You are an interview coach. Analyse the full ${interviewType} practice interview transcript above.
 
 SCORING (0–10):
 0-2: No answers or completely irrelevant.
 3-4: Weak understanding, major gaps.
 5-6: Partially correct, some practical knowledge, needs mentoring.
-7-8: Solid, job-ready, clear reasoning and examples.
+7-8: Solid, interview-ready, clear reasoning and examples.
 9-10: Exceptional depth, tradeoffs, debugging, production judgment.
 
 RULES:
@@ -648,7 +804,7 @@ Return ONLY valid JSON:
   "strengths": "2–3 sentences on candidate strengths",
   "weaknesses": "2–3 sentences on areas of improvement",
   "overallFeedback": "3–4 sentence professional final evaluation",
-  "recommendation": "Hire or No Hire",
+  "readinessLevel": "Needs Practice | Developing | Interview Ready",
   "overallRating": 0
 }
 `.trim()
@@ -680,7 +836,7 @@ Return ONLY valid JSON — no markdown, no extra text:
   "strengths": "",
   "weaknesses": "",
   "overallFeedback": "",
-  "recommendation": "Hire or No Hire",
+  "readinessLevel": "Needs Practice | Developing | Interview Ready",
   "overallRating": 0
 }
 
@@ -703,7 +859,7 @@ ${compactTranscript}
             strengths:       parsedSummary.strengths       || finalSummary.strengths,
             weaknesses:      parsedSummary.weaknesses      || finalSummary.weaknesses,
             overallFeedback: parsedSummary.overallFeedback || finalSummary.overallFeedback,
-            recommendation:  recommendationFromRating(overallRating),
+            readinessLevel:  readinessFromRating(overallRating),
             overallRating
           };
 

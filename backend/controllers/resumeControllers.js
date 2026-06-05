@@ -1,7 +1,7 @@
 const parseResume = require("../services/parseResume");
 const Candidate = require("../models/Candidate");
-const Job = require("../models/job");
 const calculateATSScore = require("../services/atsScoringService");
+const fs = require("fs");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -12,6 +12,7 @@ const buildFallbackResume = (user) => ({
   name: user?.name || "",
   email: user?.email || "",
   phone: "",
+  summary: "",
   skills: [],
   techStack: [],
   experience: [],
@@ -30,16 +31,6 @@ const uploadResume = async (req, res) => {
     // ── Validate inputs ────────────────────────────────────────────────────
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
-    }
-
-    const { jobId } = req.body;
-    if (!jobId) {
-      return res.status(400).json({ message: "Job ID is required" });
-    }
-
-    const job = await Job.findById(jobId);
-    if (!job) {
-      return res.status(404).json({ message: "Job not found" });
     }
 
     // ── Step 1: Parse resume ───────────────────────────────────────────────
@@ -68,9 +59,9 @@ const uploadResume = async (req, res) => {
     // ── Step 2: Calculate ATS score ────────────────────────────────────────
     // rawText is still on parsedResume here — atsScoringService uses it for
     // full-text skill matching. We strip it before DB save below.
-    let atsScore = 0;
+    let atsResult = { score: 0, breakdown: {}, suggestions: [] };
     try {
-      atsScore = await calculateATSScore(parsedResume, job);
+      atsResult = calculateATSScore(parsedResume);
     } catch (scoreError) {
       console.warn("[uploadResume] ATS scoring failed, defaulting to 0:", scoreError.message);
     }
@@ -86,18 +77,26 @@ const uploadResume = async (req, res) => {
       name: parsedResume.name || "",
       email: parsedResume.email || req.user?.email || "",
       parsedResume,
-      atsScore
+      atsScore: atsResult.score,
+      atsBreakdown: atsResult.breakdown,
+      atsSuggestions: atsResult.suggestions
     });
 
     return res.json({
       message: "Candidate saved successfully",
       candidate,
-      fallbackUsed
+      fallbackUsed,
+      atsBreakdown: atsResult.breakdown,
+      atsSuggestions: atsResult.suggestions
     });
 
   } catch (error) {
     console.error("[uploadResume] Unexpected error:", error);
     return res.status(500).json({ message: error.message || "Internal server error" });
+  } finally {
+    if (req.file?.path) {
+      fs.promises.unlink(req.file.path).catch(() => {});
+    }
   }
 };
 
