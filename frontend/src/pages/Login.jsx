@@ -1,148 +1,56 @@
+import { Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import API from "../services/api";
 import { useAuth } from "../context/useAuth";
-import { Link, useNavigate } from "react-router-dom";
 
-export default function Login(){
-
+export default function Login() {
   const navigate = useNavigate();
   const { login } = useAuth();
-
-  const [form,setForm] = useState({
-    email:"",
-    password:""
-  });
-
-  const [error,setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState({ email: "", password: "" });
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const handleChange = (e)=>{
-
-    setForm({
-      ...form,
-      [e.target.name]:e.target.value
-    });
-
-  };
-
-  const handleSubmit = async(e)=>{
-
-    e.preventDefault();
-
-    try{
-
+  const submit = async (event) => {
+    event.preventDefault();
+    try {
       setLoading(true);
       setError("");
-
-      const res = await API.post("/auth/login",form);
-
-      login(
-        res.data.token,
-        res.data.role,
-        res.data.userId
-      );
-
-      if (res.data.role === "candidate") {
-        navigate("/candidate", { replace:true });
-      } else if (res.data.role === "hr" || res.data.role === "admin") {
-        navigate("/hr", { replace:true });
-      } else {
-        navigate("/", { replace:true });
-      }
-
-    }catch(err){
-
-      console.log(err);
-      setError("Credentials do not match");
+      const response = await API.post("/auth/login", form);
+      login(response.data.token, response.data.userId);
+      navigate("/dashboard", { replace: true });
+    } catch (loginError) {
+      setError(loginError?.response?.data?.message || "Could not sign in.");
     } finally {
       setLoading(false);
-
     }
-
   };
 
-  return(
-
-    <div className="min-h-screen pt-24
-                    flex justify-center items-center
-                    bg-gray-100 dark:bg-gray-900
-                    text-gray-900 dark:text-white
-                    transition-colors duration-300">
-
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white dark:bg-gray-800
-                   p-8 rounded-xl shadow-lg
-                   w-[400px] space-y-4"
-      >
-
-        <h2 className="text-2xl font-bold text-center">
-          Login
-        </h2>
-
-        {/* ERROR MESSAGE */}
-        {error && (
-          <div className="bg-red-100 dark:bg-red-900
-                          text-red-600 dark:text-red-300
-                          p-2 rounded text-sm">
-            {error}
+  return (
+    <AuthLayout title="Welcome back" description="Continue your resume-based interview preparation.">
+      <form onSubmit={submit} className="space-y-4">
+        {error && <div className="error-banner">{error}</div>}
+        <Field label="Email"><input type="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="form-input" /></Field>
+        <Field label="Password">
+          <div className="relative">
+            <input type={showPassword ? "text" : "password"} required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className="form-input pr-11" />
+            <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" aria-label="Toggle password visibility">
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
           </div>
-        )}
-
-        <input
-          name="email"
-          placeholder="Email"
-          onChange={handleChange}
-          className="border dark:border-gray-600
-                     bg-white dark:bg-gray-700
-                     p-3 w-full rounded
-                     focus:ring-2 focus:ring-green-500
-                     outline-none"
-        />
-
-        <input
-          type={showPassword ? "text" : "password"}
-          name="password"
-          placeholder="Password"
-          onChange={handleChange}
-          className="border dark:border-gray-600
-                     bg-white dark:bg-gray-700
-                     p-3 w-full rounded
-                     focus:ring-2 focus:ring-green-500
-                     outline-none"
-        />
-
-        <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-          <input
-            type="checkbox"
-            checked={showPassword}
-            onChange={(e) => setShowPassword(e.target.checked)}
-          />
-          Show password
-        </label>
-
-        <button
-          disabled={loading}
-          className="bg-green-600 dark:bg-green-500
-                     hover:bg-green-700 dark:hover:bg-green-600
-                     text-white p-3 w-full rounded disabled:opacity-70 disabled:cursor-not-allowed
-                     transition-all duration-200"
-        >
-          {loading ? "Signing in..." : "Login"}
-        </button>
-
-        <p className="text-sm text-gray-600 dark:text-gray-300 text-center">
-          New user?{" "}
-          <Link to="/register" className="text-blue-600 dark:text-blue-400 hover:underline">
-            Create an account
-          </Link>
-        </p>
-
+        </Field>
+        <button disabled={loading} className="primary-button w-full justify-center">{loading ? "Signing in..." : "Sign in"}</button>
+        <p className="text-center text-sm text-slate-500">New here? <Link to="/register" className="font-semibold text-emerald-700 dark:text-emerald-400">Create an account</Link></p>
       </form>
-
-    </div>
-
+    </AuthLayout>
   );
+}
 
+export function AuthLayout({ title, description, children }) {
+  return <main className="page-shell grid place-items-center"><section className="surface w-full max-w-md p-7 sm:p-9"><h1 className="text-2xl font-bold">{title}</h1><p className="mt-2 mb-7 text-sm text-slate-600 dark:text-slate-300">{description}</p>{children}</section></main>;
+}
+
+export function Field({ label, children }) {
+  return <label className="block"><span className="mb-1.5 block text-sm font-medium">{label}</span>{children}</label>;
 }

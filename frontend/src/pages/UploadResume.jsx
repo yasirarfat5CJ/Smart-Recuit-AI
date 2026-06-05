@@ -1,250 +1,127 @@
-import { useEffect, useState } from "react";
+import { AlertCircle, ArrowRight, CheckCircle2, FileText, UploadCloud } from "lucide-react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { UploadResumeAPI, getJobsAPI } from "../services/api";
+import { uploadResume } from "../services/api";
+
+const labels = {
+  skills: ["Skills", 30],
+  projects: ["Projects", 30],
+  education: ["Education", 15],
+  experience: ["Experience", 10],
+  completeness: ["Completeness", 15]
+};
 
 export default function UploadResume() {
-
   const navigate = useNavigate();
-
-  const [jobs, setJobs] = useState([]);
-  const [selectedJob, setSelectedJob] = useState("");
   const [file, setFile] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState("");
-  const [warning, setWarning] = useState("");
 
-  const [atsResult, setAtsResult] = useState(null);
-  const [candidateId, setCandidateId] = useState(null);
-
-  useEffect(() => {
-
-    const fetchJobs = async () => {
-
-      try {
-        const res = await getJobsAPI();
-        setJobs(res.data);
-      } catch (err) {
-        console.log(err);
-      }
-
-    };
-
-    fetchJobs();
-
-  }, []);
-
-  const handleSubmit = async (e) => {
-
-    e.preventDefault();
-
-    if (!file || !selectedJob) {
-      setError("Please select a job role and upload a PDF resume.");
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append("resume", file);
-    formData.append("jobId", selectedJob);
-
-    try {
-
-      setLoading(true);
-      setError("");
-      setWarning("");
-
-      const res = await UploadResumeAPI(formData);
-
-      setAtsResult(res.data.candidate.atsScore);
-      setCandidateId(res.data.candidate._id);
-      if (res.data.fallbackUsed) {
-        setWarning("Resume uploaded, but AI parsing was partially unavailable. You can still continue.");
-      }
-
-    } catch (error) {
-
-      console.log(error);
-      const backendMessage = error?.response?.data?.message;
-      const statusCode = error?.response?.status;
-      const networkMessage = error?.message;
-
-      setError(
-        backendMessage ||
-        (statusCode ? `Upload failed (${statusCode}). Please try again.` : null) ||
-        (networkMessage ? `Upload failed: ${networkMessage}` : null) ||
-        "Upload failed. Please try again."
-      );
-
-    } finally {
-
-      setLoading(false);
-
-    }
-
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragActive(false);
-    const dropped = e.dataTransfer.files?.[0];
-    if (!dropped) return;
-    if (dropped.type !== "application/pdf") {
-      setError("Only PDF files are supported.");
-      return;
-    }
-    setError("");
-    setFile(dropped);
-  };
-
-  const handleFilePick = (e) => {
-    const picked = e.target.files?.[0];
+  const selectFile = (picked) => {
     if (!picked) return;
     if (picked.type !== "application/pdf") {
-      setError("Only PDF files are supported.");
+      setError("Please choose a PDF resume.");
+      return;
+    }
+    if (picked.size > 5 * 1024 * 1024) {
+      setError("The PDF must be 5 MB or smaller.");
       return;
     }
     setError("");
     setFile(picked);
   };
 
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!file) return setError("Choose a resume before continuing.");
+
+    try {
+      setLoading(true);
+      setError("");
+      const formData = new FormData();
+      formData.append("resume", file);
+      const response = await uploadResume(formData);
+      setResult(response.data);
+    } catch (uploadError) {
+      setError(uploadError?.response?.data?.message || "Resume analysis failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
+    <main className="page-shell">
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-8">
+          <p className="section-label">Resume analysis</p>
+          <h1 className="page-title">Build your interview baseline</h1>
+          <p className="page-copy">Your score reflects resume quality and interview readiness, not a comparison with a job posting.</p>
+        </div>
 
-    <div className="min-h-screen px-4 flex justify-center items-center
-                    bg-gray-100 dark:bg-gray-900
-                    text-gray-900 dark:text-white
-                    transition-colors duration-300">
-
-      <div className="bg-white dark:bg-gray-800
-                      p-8 rounded-2xl shadow-lg
-                      w-full max-w-2xl">
-
-        <h2 className="text-3xl font-bold mb-6 text-center">
-          Upload Resume
-        </h2>
-
-        {!atsResult ? (
-
-          <form onSubmit={handleSubmit} className="space-y-5">
-
-            <select
-              className="w-full border dark:border-gray-600
-                         p-3 rounded
-                         bg-white dark:bg-gray-700
-                         focus:ring-2 focus:ring-blue-500 outline-none"
-              value={selectedJob}
-              onChange={(e) => setSelectedJob(e.target.value)}
-            >
-              <option value="">Select Job Role</option>
-
-              {jobs.map((job) => (
-                <option key={job._id} value={job._id}>
-                  {job.title}
-                </option>
-              ))}
-
-            </select>
-
+        {!result ? (
+          <form onSubmit={submit} className="surface max-w-3xl p-6 sm:p-8">
             <label
               htmlFor="resume"
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragActive(true);
-              }}
-              onDragLeave={(e) => {
-                e.preventDefault();
-                setDragActive(false);
-              }}
-              onDrop={handleDrop}
-              className={`w-full block border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition ${
-                dragActive
-                  ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                  : "border-gray-300 dark:border-gray-600"
-              }`}
+              onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(event) => { event.preventDefault(); setDragging(false); selectFile(event.dataTransfer.files?.[0]); }}
+              className={`grid min-h-72 cursor-pointer place-items-center border-2 border-dashed p-8 text-center transition ${dragging ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30" : "border-slate-300 dark:border-slate-700"}`}
             >
-              <div className="text-sm text-gray-600 dark:text-gray-300">
-                Drag & drop your resume PDF here or click to browse
+              <div>
+                <UploadCloud className="mx-auto mb-5 text-emerald-600" size={38} />
+                <p className="font-semibold">Drop your PDF resume here</p>
+                <p className="mt-2 text-sm text-slate-500">or click to browse, up to 5 MB</p>
+                {file && (
+                  <span className="mt-5 inline-flex items-center gap-2 bg-slate-100 px-3 py-2 text-sm dark:bg-slate-800">
+                    <FileText size={16} /> {file.name}
+                  </span>
+                )}
               </div>
-              {file ? (
-                <div className="mt-2 text-sm font-medium text-green-600 dark:text-green-400 break-all">
-                  Selected: {file.name}
-                </div>
-              ) : null}
             </label>
-
-            <input
-              id="resume"
-              type="file"
-              accept="application/pdf"
-              className="hidden"
-              onChange={handleFilePick}
-            />
-
-            {error ? (
-              <div className="text-sm rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-3 py-2">
-                {error}
-              </div>
-            ) : null}
-
-            {warning ? (
-              <div className="text-sm rounded-lg bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 px-3 py-2">
-                {warning}
-              </div>
-            ) : null}
-
-            <button
-              disabled={loading}
-              className="bg-blue-600 dark:bg-blue-500
-                         hover:bg-blue-700 dark:hover:bg-blue-600
-                         text-white w-full py-3 rounded-lg
-                         disabled:opacity-70 disabled:cursor-not-allowed
-                         transition-all duration-200"
-            >
-              {loading ? "Analyzing Resume..." : "Upload Resume"}
+            <input id="resume" type="file" accept="application/pdf" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])} />
+            {error && <div className="error-banner mt-4"><AlertCircle size={17} /> {error}</div>}
+            <button disabled={loading || !file} className="primary-button mt-5 w-full justify-center">
+              {loading ? "Reading and scoring resume..." : "Analyze resume"}
             </button>
-
           </form>
-
         ) : (
-
-          <div className="text-center space-y-5">
-
-            <h3 className="text-xl font-semibold">
-              ATS Score
-            </h3>
-
-            <div className="mx-auto h-36 w-36 rounded-full bg-gradient-to-tr from-green-500 to-emerald-400 text-white grid place-items-center shadow-lg">
-              <div className="text-4xl font-bold">{atsResult}</div>
-            </div>
-
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              Resume parsed successfully. Continue with AI interview or open your dashboard.
-            </p>
-
-            <div className="flex gap-4 justify-center mt-6">
-
-              <button
-                onClick={() => navigate(`/interview/${candidateId}`)}
-                className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 transition"
-              >
-                Start Interview
+          <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
+            <section className="surface p-6 text-center">
+              <CheckCircle2 className="mx-auto text-emerald-600" size={28} />
+              <p className="mt-3 text-sm font-medium text-slate-500">ATS readiness score</p>
+              <p className="mt-2 text-6xl font-bold">{result.candidate.atsScore}</p>
+              <p className="mt-2 text-sm text-slate-500">out of 100</p>
+              <button onClick={() => navigate("/dashboard")} className="primary-button mt-6 w-full justify-center">
+                Continue <ArrowRight size={17} />
               </button>
-
-              <button
-                onClick={() => navigate(`/candidate/${candidateId}`)}
-                className="bg-gray-700 dark:bg-gray-600 text-white px-5 py-2 rounded-lg hover:bg-gray-800 transition"
-              >
-                Go Dashboard
-              </button>
-
-            </div>
-
+            </section>
+            <section className="surface p-6">
+              <h2 className="text-lg font-semibold">Score breakdown</h2>
+              <div className="mt-5 space-y-4">
+                {Object.entries(labels).map(([key, [label, max]]) => {
+                  const value = result.atsBreakdown?.[key] || 0;
+                  return (
+                    <div key={key}>
+                      <div className="mb-1 flex justify-between text-sm"><span>{label}</span><span>{value}/{max}</span></div>
+                      <div className="h-2 bg-slate-200 dark:bg-slate-700"><div className="h-full bg-emerald-600" style={{ width: `${(value / max) * 100}%` }} /></div>
+                    </div>
+                  );
+                })}
+              </div>
+              {!!result.atsSuggestions?.length && (
+                <div className="mt-7 border-t border-slate-200 pt-5 dark:border-slate-700">
+                  <h3 className="font-semibold">Improve next</h3>
+                  <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
+                    {result.atsSuggestions.map((suggestion) => <li key={suggestion}>• {suggestion}</li>)}
+                  </ul>
+                </div>
+              )}
+            </section>
           </div>
-
         )}
-
       </div>
-
-    </div>
-
+    </main>
   );
 }

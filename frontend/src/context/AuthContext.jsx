@@ -4,16 +4,16 @@ const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
 
-  const [role, setRole] = useState(() => localStorage.getItem("role"));
+  const [role, setRole] = useState(() => localStorage.getItem("token") ? "candidate" : null);
   const [userId, setUserId] = useState(() => localStorage.getItem("userId"));
 
-  const login = (token, role, userId) => {
+  const login = (token, userId) => {
 
     localStorage.setItem("token", token);
-    localStorage.setItem("role", role);
+    localStorage.setItem("role", "candidate");
     localStorage.setItem("userId", userId);
 
-    setRole(role);
+    setRole("candidate");
     setUserId(userId);
 
   };

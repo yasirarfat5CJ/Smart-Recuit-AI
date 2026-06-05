@@ -1,175 +1,79 @@
-import { Link, useNavigate } from "react-router-dom";
-import { useMemo, useState, useEffect } from "react";
+import { BookOpenCheck, LogOut, Menu, Moon, Sun, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/useAuth";
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
-  const [dark, setDark] = useState(() => {
-    const stored = localStorage.getItem("theme");
-    if (stored) return stored === "dark";
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
-  });
-
-  const { role, userId, logout } = useAuth();
+  const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark");
+  const { userId, logout } = useAuth();
   const navigate = useNavigate();
 
-  // Global Dark Mode
   useEffect(() => {
-
-    if (dark) {
-      document.documentElement.classList.add("dark");
-      localStorage.setItem("theme", "dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-      localStorage.setItem("theme", "light");
-    }
-
+    document.documentElement.classList.toggle("dark", dark);
+    localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
 
-  const isHR = role === "hr" || role === "admin";
-  const navItems = useMemo(() => {
-    const items = [{ to: "/", label: "Home" }];
-    if (role === "candidate") items.push({ to: "/candidate", label: "Dashboard" });
-    if (role === "candidate") items.push({ to: "/upload", label: "Upload Resume" });
-    if (isHR) items.push({ to: "/hr", label: "HR Dashboard" });
-    if (isHR) items.push({ to: "/hr/jobs", label: "Jobs" });
-    return items;
-  }, [isHR, role]);
-
-  const handleLogout = () => {
+  const signOut = () => {
     logout();
     setOpen(false);
-    navigate("/login");
+    navigate("/");
   };
 
+  const links = userId
+    ? [{ to: "/dashboard", label: "Dashboard" }, { to: "/upload", label: "Resume" }]
+    : [];
+
   return (
+    <header className="fixed inset-x-0 top-0 z-50 border-b border-slate-200 bg-white/95 text-slate-950 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 dark:text-white">
+      <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
+        <Link to="/" className="flex items-center gap-2 font-bold">
+          <span className="grid h-9 w-9 place-items-center rounded-md bg-emerald-600 text-white">
+            <BookOpenCheck size={19} />
+          </span>
+          Interview Prep AI
+        </Link>
 
-    <>
-      <nav className="fixed top-0 left-0 w-full z-50 border-b border-slate-200/70 dark:border-slate-700/70 bg-white/90 dark:bg-slate-950/90 backdrop-blur text-black dark:text-white px-6 py-4 shadow-sm">
-
-        <div className="flex justify-between items-center">
-
-          <h3 className="text-xl font-bold">
-            <Link to="/">Smart Recruit AI</Link>
-          </h3>
-
-          {/* DESKTOP MENU */}
-          <div className="hidden md:flex gap-6 items-center">
-            {navItems.map((item) => (
-              <NavLink key={item.to} to={item.to} onClick={() => setOpen(false)}>
-                {item.label}
-              </NavLink>
-            ))}
-
-            {!userId ? (
-              <>
-                <NavLink to="/login" onClick={() => setOpen(false)}>Login</NavLink>
-                <NavLink to="/register" onClick={() => setOpen(false)}>Register</NavLink>
-              </>
-            ) : (
-              <>
-                <button
-                  onClick={handleLogout}
-                  className="bg-red-500 px-3 py-1 rounded hover:bg-red-600 text-white"
-                >
-                  Logout
-                </button>
-              </>
-            )}
-
-            {/* DARK MODE TOGGLE */}
-            <button
-              onClick={() => setDark(!dark)}
-              className="border border-slate-300 dark:border-slate-600 px-3 py-1 rounded"
+        <div className="hidden items-center gap-2 md:flex">
+          {links.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) => `px-3 py-2 text-sm font-medium ${isActive ? "text-emerald-700 dark:text-emerald-400" : "text-slate-600 dark:text-slate-300"}`}
             >
-              {dark ? "Light" : "Dark"}
+              {item.label}
+            </NavLink>
+          ))}
+          {!userId && <Link to="/login" className="px-3 py-2 text-sm font-medium">Sign in</Link>}
+          {!userId && <Link to="/register" className="rounded-md bg-slate-950 px-4 py-2 text-sm font-semibold text-white dark:bg-white dark:text-slate-950">Create account</Link>}
+          {userId && (
+            <button onClick={signOut} className="icon-button" title="Sign out" aria-label="Sign out">
+              <LogOut size={18} />
             </button>
-
-          </div>
-
-          {/* MOBILE BUTTON */}
-          <button
-            className="md:hidden text-xl"
-          onClick={() => setOpen((prev) => !prev)}
-        >
-          ☰
-        </button>
-
+          )}
+          <button onClick={() => setDark((value) => !value)} className="icon-button" title="Toggle theme" aria-label="Toggle theme">
+            {dark ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
         </div>
 
+        <button onClick={() => setOpen((value) => !value)} className="icon-button md:hidden" aria-label="Open menu">
+          {open ? <X size={20} /> : <Menu size={20} />}
+        </button>
       </nav>
 
-      {/* BACKDROP */}
       {open && (
-        <div
-          className="fixed inset-0 z-40 md:hidden bg-black/20"
-          onClick={() => setOpen(false)}
-        />
+        <div className="border-t border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 md:hidden">
+          <div className="flex flex-col gap-2">
+            {links.map((item) => <NavLink key={item.to} to={item.to} onClick={() => setOpen(false)} className="py-2">{item.label}</NavLink>)}
+            {!userId && <Link to="/login" onClick={() => setOpen(false)} className="py-2">Sign in</Link>}
+            {!userId && <Link to="/register" onClick={() => setOpen(false)} className="py-2">Create account</Link>}
+            {userId && <button onClick={signOut} className="flex items-center gap-2 py-2 text-left"><LogOut size={18} /> Sign out</button>}
+            <button onClick={() => setDark((value) => !value)} className="flex items-center gap-2 py-2 text-left">
+              {dark ? <Sun size={18} /> : <Moon size={18} />} Theme
+            </button>
+          </div>
+        </div>
       )}
-
-      {/* MOBILE FLOATING MENU */}
-      <div
-        className={`
-          fixed top-16 right-4
-          w-64
-          rounded-xl
-          shadow-xl
-          border border-gray-200 dark:border-gray-700
-          bg-white/95 dark:bg-gray-900/95
-          backdrop-blur-lg
-          p-5
-          flex flex-col gap-4
-          transform transition-all duration-300
-          z-50
-          md:hidden
-          ${open ? "translate-x-0 opacity-100" : "translate-x-full opacity-0 pointer-events-none"}
-        `}
-      >
-
-        {navItems.map((item) => (
-          <NavLink key={item.to} to={item.to} onClick={() => setOpen(false)}>
-            {item.label}
-          </NavLink>
-        ))}
-
-        {!userId ? (
-          <>
-            <NavLink to="/login" onClick={() => setOpen(false)}>Login</NavLink>
-            <NavLink to="/register" onClick={() => setOpen(false)}>Register</NavLink>
-          </>
-        ) : (
-          <button
-            onClick={handleLogout}
-            className="bg-red-500 text-white px-3 py-2 rounded"
-          >
-            Logout
-          </button>
-        )}
-
-        {/* ⭐ DARK MODE TOGGLE ADDED TO MOBILE */}
-        <button
-          onClick={() => setDark(!dark)}
-          className="border border-slate-300 dark:border-slate-600 px-3 py-1 rounded"
-        >
-          {dark ? "Light Mode" : "Dark Mode"}
-        </button>
-
-      </div>
-
-    </>
+    </header>
   );
-}
-
-function NavLink({ to, children, onClick }) {
-
-  return (
-    <Link
-      to={to}
-      onClick={onClick}
-      className="transition text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400"
-    >
-      {children}
-    </Link>
-  );
-
 }

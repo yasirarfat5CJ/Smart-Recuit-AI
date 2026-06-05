@@ -1,131 +1,34 @@
-import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
-
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import ProtectedRoute from "./components/protectedRoute";
-
 import Home from "./pages/Home";
 import UploadResume from "./pages/UploadResume";
 import Interview from "./pages/Interview";
 import Summary from "./pages/Summary";
-
-import HRDashboard from "./pages/HRDashboard";
 import CandidateDashboard from "./pages/CandidateDashboard";
-
-import CandidateProfile from "./pages/Candidates";   
-
-import CreateJob from "./pages/CreateJob";
-import Jobs from "./pages/jobs";
-
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 
-function App() {
+const StudentRoute = ({ children }) => (
+  <ProtectedRoute allowedRoles={["candidate"]}>{children}</ProtectedRoute>
+);
 
+export default function App() {
   return (
-
     <BrowserRouter>
-
-      {/* GLOBAL NAVBAR */}
       <Navbar />
-
       <Routes>
-
         <Route path="/" element={<Home />} />
-
-        {/* CANDIDATE ROUTES */}
-        <Route
-          path="/upload"
-          element={
-            <ProtectedRoute allowedRoles={["candidate"]}>
-              <UploadResume />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/interview/:candidateId"
-          element={
-            <ProtectedRoute allowedRoles={["candidate"]}>
-              <Interview />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route path="/summary" element={<Summary />} />
-
-        {/* HR ROUTES */}
-        <Route
-          path="/hr"
-          element={
-            <ProtectedRoute allowedRoles={["hr","admin"]}>
-              <HRDashboard />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/hr/candidates"
-          element={
-            <ProtectedRoute allowedRoles={["hr","admin"]}>
-              <Navigate to="/hr" replace />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/hr/candidate/:id"
-          element={
-            <ProtectedRoute allowedRoles={["hr","admin"]}>
-              <CandidateProfile />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/hr/create-job"
-          element={
-            <ProtectedRoute allowedRoles={["hr","admin"]}>
-              <CreateJob />
-            </ProtectedRoute>
-          }
-        />
-
-        
-
-        {/* CANDIDATE DASHBOARD */}
-        <Route
-          path="/candidate"
-          element={
-            <ProtectedRoute allowedRoles={["candidate"]}>
-              <CandidateDashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/candidate/:id"
-          element={
-            <ProtectedRoute allowedRoles={["candidate"]}>
-              <CandidateDashboard />
-            </ProtectedRoute>
-          }
-        />
         <Route path="/login" element={<Login />} />
-         <Route path="/register" element={<Register />} />
-          <Route
-            path="/hr/jobs"
-            element={
-              <ProtectedRoute allowedRoles={["hr","admin"]}>
-                <Jobs />
-              </ProtectedRoute>
-            }
-          />
-          
+        <Route path="/register" element={<Register />} />
+        <Route path="/dashboard" element={<StudentRoute><CandidateDashboard /></StudentRoute>} />
+        <Route path="/candidate" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/candidate/:id" element={<StudentRoute><CandidateDashboard /></StudentRoute>} />
+        <Route path="/upload" element={<StudentRoute><UploadResume /></StudentRoute>} />
+        <Route path="/interview/:candidateId" element={<StudentRoute><Interview /></StudentRoute>} />
+        <Route path="/summary" element={<StudentRoute><Summary /></StudentRoute>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-
     </BrowserRouter>
-
   );
-
 }
-
-export default App;

@@ -1,93 +1,42 @@
-import { useLocation, useNavigate } from "react-router-dom";
+import { ArrowRight, RotateCcw, Target } from "lucide-react";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
 export default function Summary() {
-
   const { state } = useLocation();
   const navigate = useNavigate();
-
   const summary = state?.summary;
-  const candidateId = state?.candidateId;
 
-  if (!summary) {
-
-    return (
-
-      <div className="min-h-screen flex items-center justify-center
-                      bg-gray-100 dark:bg-gray-900
-                      text-gray-900 dark:text-white">
-
-        <h2>No summary found</h2>
-
-      </div>
-
-    );
-
-  }
+  if (!summary) return <Navigate to="/dashboard" replace />;
 
   return (
+    <main className="page-shell">
+      <div className="mx-auto max-w-4xl">
+        <p className="section-label">Practice complete</p>
+        <h1 className="page-title capitalize">{state.interviewType} interview review</h1>
 
-    <div className="min-h-screen px-4 flex items-center justify-center
-                    bg-gray-100 dark:bg-gray-900
-                    text-gray-900 dark:text-white
-                    transition-colors duration-300">
-
-      <div className="bg-white dark:bg-gray-800
-                      p-8 rounded-xl shadow-lg
-                      max-w-xl w-full">
-
-        <h2 className="text-3xl font-bold mb-6 text-center">
-          Interview Summary
-        </h2>
-
-        <p className="mb-2">
-          <b>Strengths:</b> {summary.strengths}
-        </p>
-
-        <p className="mb-2">
-          <b>Weaknesses:</b> {summary.weaknesses}
-        </p>
-
-        <p className="mb-2">
-          <b>Overall Rating:</b> {summary.overallRating}
-        </p>
-
-        <p className="mb-2">
-          <b>Overall Feedback:</b> {summary.overallFeedback || "N/A"}
-        </p>
-
-        <div className="mt-5 flex items-center gap-3">
-          <span className="text-lg font-semibold">Recommendation:</span>
-          <span
-            className={`px-3 py-1 rounded-full text-sm font-bold ${
-              summary.recommendation === "Hire"
-                ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
-                : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
-            }`}
-          >
-            {summary.recommendation || "N/A"}
-          </span>
+        <div className="mt-8 grid gap-5 md:grid-cols-[240px_1fr]">
+          <section className="surface p-6 text-center">
+            <Target className="mx-auto text-emerald-600" size={28} />
+            <p className="mt-4 text-6xl font-bold">{Math.round((summary.overallRating || 0) * 10)}</p>
+            <p className="mt-1 text-sm text-slate-500">interview score</p>
+            <span className="mt-5 inline-block bg-emerald-100 px-3 py-2 text-sm font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">{summary.readinessLevel || "Needs Practice"}</span>
+          </section>
+          <section className="surface divide-y divide-slate-200 dark:divide-slate-700">
+            <Review title="What went well" content={summary.strengths} />
+            <Review title="Focus areas" content={summary.weaknesses} />
+            <Review title="Coach feedback" content={summary.overallFeedback} />
+          </section>
         </div>
 
-        <div className="mt-7 flex flex-wrap gap-3">
-          {candidateId ? (
-            <button
-              onClick={() => navigate(`/candidate/${candidateId}`)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
-            >
-              Open Dashboard
-            </button>
-          ) : null}
-          <button
-            onClick={() => navigate("/")}
-            className="border border-gray-300 dark:border-gray-600 px-4 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition"
-          >
-            Go Home
-          </button>
+        <div className="mt-6 flex flex-wrap gap-3">
+          <button onClick={() => navigate(`/interview/${state.candidateId}?type=${state.interviewType}`)} className="secondary-button"><RotateCcw size={17} /> Practice again</button>
+          <button onClick={() => navigate("/dashboard")} className="primary-button">Dashboard <ArrowRight size={17} /></button>
         </div>
-
       </div>
-
-    </div>
-
+    </main>
   );
+}
+
+function Review({ title, content }) {
+  return <div className="p-6"><h2 className="font-semibold">{title}</h2><p className="mt-2 text-sm leading-7 text-slate-600 dark:text-slate-300">{content || "No feedback available."}</p></div>;
 }

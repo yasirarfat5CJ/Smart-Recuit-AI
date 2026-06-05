@@ -1,270 +1,208 @@
+import { ArrowLeft, CircleStop, Mic, Send, Square, Type } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import socket from "../services/socket";
+
+const modeNames = { project: "Project", technical: "Technical", hr: "HR" };
 
 export default function Interview() {
   const { candidateId } = useParams();
+  const [searchParams] = useSearchParams();
+  const interviewType = ["project", "technical", "hr"].includes(searchParams.get("type")) ? searchParams.get("type") : "technical";
   const navigate = useNavigate();
-
   const [messages, setMessages] = useState([]);
-  const [currentQuestion, setCurrentQuestion] = useState("");
   const [input, setInput] = useState("");
   const [started, setStarted] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [connectionState, setConnectionState] = useState("disconnected");
+  const [connected, setConnected] = useState(false);
+  const [inputMode, setInputMode] = useState("text");
+  const [listening, setListening] = useState(false);
   const [error, setError] = useState("");
-
+  const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
-  const startTimeoutRef = useRef(null);
-  const hasQuestionRef = useRef(false);
-  const startedRef = useRef(started);
 
-  useEffect(() => {
-    startedRef.current = started;
-  }, [started]);
-
-  const sendMessage = () => {
-    const answer = input.trim();
-    if (!answer || processing) return;
-
-    setMessages((prev) => [
-      ...prev,
-      { sender: "user", text: answer },
-    ]);
-
-    setProcessing(true);
-    socket.emit("candidateAnswer", { answer });
-
-    setInput("");
+  const stopListening = () => {
+    recognitionRef.current?.stop();
+    setListening(false);
   };
 
-  // START INTERVIEW
+  const startListening = () => {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) {
+      setError("Voice input is not supported in this browser. Use Chrome or Edge, or type your answer.");
+      return;
+    }
+
+    setError("");
+    const recognition = new Recognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    let finalTranscript = input ? `${input.trim()} ` : "";
+
+    recognition.onresult = (event) => {
+      let interim = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const transcript = event.results[index][0].transcript;
+        if (event.results[index].isFinal) finalTranscript += `${transcript} `;
+        else interim += transcript;
+      }
+      setInput(`${finalTranscript}${interim}`.trimStart());
+    };
+    recognition.onerror = (event) => {
+      setListening(false);
+      if (event.error !== "aborted") setError(`Microphone error: ${event.error}.`);
+    };
+    recognition.onend = () => setListening(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+    setListening(true);
+  };
+
   const startInterview = () => {
     setError("");
-    setConnectionState("connecting");
     setProcessing(true);
-    hasQuestionRef.current = false;
     socket.connect();
-    socket.emit("startInterview", { candidateId });
+    socket.emit("startInterview", { candidateId, interviewType });
     setStarted(true);
-
-    if (startTimeoutRef.current) {
-      clearTimeout(startTimeoutRef.current);
-    }
-	    startTimeoutRef.current = setTimeout(() => {
-	      if (hasQuestionRef.current || !startedRef.current) return;
-	      setProcessing(false);
-	      setError("The interviewer is taking longer than expected. Please wait a moment or restart the interview.");
-	    }, 20000);
   };
 
-  // SOCKET EVENTS
+  const sendAnswer = () => {
+    const answer = input.trim();
+    if (!answer || processing) return;
+    stopListening();
+    setMessages((current) => [...current, { sender: "user", text: answer }]);
+    setInput("");
+    setProcessing(true);
+    socket.emit("candidateAnswer", { answer });
+  };
+
+  const endInterview = () => {
+    stopListening();
+    setProcessing(true);
+    socket.emit("endInterview");
+  };
+
   useEffect(() => {
-    const onConnect = () => {
-      setConnectionState("connected");
-    };
-
-    const onDisconnect = () => {
-      setConnectionState("disconnected");
-    };
-
-    const onConnectError = () => {
-      setConnectionState("disconnected");
-      setStarted(false);
+    const onQuestion = (question) => {
       setProcessing(false);
-      setError("Connection failed. Please login again and retry.");
+      setMessages((current) => [...current, { sender: "ai", text: question }]);
     };
-
-    socket.on("aiQuestion", (question) => {
+    const onEvaluation = (data) => {
       setProcessing(false);
-      hasQuestionRef.current = true;
-      if (startTimeoutRef.current) {
-        clearTimeout(startTimeoutRef.current);
-      }
-      setCurrentQuestion(question);
-      setMessages((prev) => [
-        ...prev,
-        { sender: "ai", text: question },
+      setMessages((current) => [
+        ...current,
+        ...(data?.feedback ? [{ sender: "feedback", text: data.feedback }] : []),
+        { sender: "ai", text: data.nextQuestion }
       ]);
-    });
-
-    socket.on("aiEvaluation", (data) => {
+    };
+    const onSummary = (summary) => {
       setProcessing(false);
-      if (data?.nextQuestion) {
-        setCurrentQuestion(data.nextQuestion);
-      }
-      setMessages((prev) => [
-        ...prev,
-        { sender: "ai", text: `Feedback: ${data.feedback}` },
-        { sender: "ai", text: data.nextQuestion },
-      ]);
-    });
-
-    socket.on("finalSummary", (summary) => {
+      navigate("/summary", { state: { summary, candidateId, interviewType } });
+    };
+    const onError = (message) => {
       setProcessing(false);
-      navigate("/summary", { state: { summary, candidateId } });
-    });
+      setError(typeof message === "string" ? message : "Something went wrong.");
+    };
 
-    socket.on("error", (msg) => {
-      setProcessing(false);
-      setError(typeof msg === "string" ? msg : "Something went wrong.");
-    });
-
-    socket.on("connect", onConnect);
-    socket.on("disconnect", onDisconnect);
-    socket.on("connect_error", onConnectError);
+    socket.on("connect", () => setConnected(true));
+    socket.on("disconnect", () => setConnected(false));
+    socket.on("connect_error", () => onError("Could not connect to the interview server."));
+    socket.on("aiQuestion", onQuestion);
+    socket.on("aiEvaluation", onEvaluation);
+    socket.on("finalSummary", onSummary);
+    socket.on("error", onError);
 
     return () => {
-      socket.off("aiQuestion");
-      socket.off("aiEvaluation");
-      socket.off("finalSummary");
-      socket.off("error");
-      socket.off("connect", onConnect);
-      socket.off("disconnect", onDisconnect);
-      socket.off("connect_error", onConnectError);
-      if (startTimeoutRef.current) {
-        clearTimeout(startTimeoutRef.current);
-      }
+      stopListening();
+      socket.removeAllListeners();
       socket.disconnect();
     };
-  }, [candidateId, navigate]);
+  }, [candidateId, interviewType, navigate]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, processing]);
 
-  useEffect(() => () => {
-    if (startTimeoutRef.current) {
-      clearTimeout(startTimeoutRef.current);
-    }
-  }, []);
-
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white p-4 md:p-6 transition-colors duration-300">
-      {/* HEADER */}
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl md:text-3xl font-bold">
-          AI Technical Interview
-        </h1>
+    <main className="min-h-screen bg-slate-100 pt-16 text-slate-950 dark:bg-slate-950 dark:text-white">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-7xl flex-col">
+        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-900 sm:px-6">
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate("/dashboard")} className="icon-button" title="Back to dashboard"><ArrowLeft size={19} /></button>
+            <div><h1 className="font-semibold">{modeNames[interviewType]} interview</h1><p className="text-xs text-slate-500">Questions use only your resume</p></div>
+          </div>
+          <span className={`flex items-center gap-2 text-xs ${connected ? "text-emerald-600" : "text-slate-500"}`}>
+            <span className={`h-2 w-2 rounded-full ${connected ? "bg-emerald-500" : "bg-slate-400"}`} /> {connected ? "Connected" : "Offline"}
+          </span>
+        </header>
 
-        <div className={`text-xs px-3 py-1 rounded-full ${
-          connectionState === "connected"
-            ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
-            : connectionState === "connecting"
-              ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300"
-              : "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
-        }`}>
-          {connectionState}
-        </div>
-      </div>
+        {error && <div className="error-banner m-4 sm:mx-6">{error}</div>}
 
-      {error ? (
-        <div className="mb-4 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-4 py-2 text-sm">
-          {error}
-        </div>
-      ) : null}
+        <section className="flex flex-1 flex-col bg-white dark:bg-slate-900">
+          <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
+            {!started && (
+              <div className="mx-auto max-w-lg py-20 text-center">
+                <h2 className="text-2xl font-bold">Ready for your {modeNames[interviewType].toLowerCase()} practice?</h2>
+                <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">The AI will ask one question at a time and adapt to each answer. You can type or dictate your response.</p>
+                <button onClick={startInterview} disabled={processing} className="primary-button mt-7">{processing ? "Preparing questions..." : "Begin interview"}</button>
+              </div>
+            )}
 
-      <div className="grid md:grid-cols-4 gap-6">
-        {/* LEFT SIDEBAR */}
-        <div className="md:col-span-1 p-4 rounded shadow bg-white dark:bg-gray-800">
-          <h2 className="font-bold mb-4">Interview Info</h2>
-
-          <p>Candidate ID:</p>
-          <p className="text-sm break-all">{candidateId}</p>
-
-          {currentQuestion ? (
-            <div className="mt-4 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-900/20 p-3">
-              <p className="text-xs uppercase tracking-wide text-blue-700 dark:text-blue-300 font-semibold mb-2">
-                Current Question
-              </p>
-              <p className="text-sm leading-6 text-gray-900 dark:text-gray-100">
-                {currentQuestion}
-              </p>
-            </div>
-          ) : null}
-
-          {!started && (
-            <button
-              onClick={startInterview}
-              className="mt-4 bg-green-600 text-white px-4 py-2 rounded w-full hover:bg-green-700 transition disabled:opacity-70"
-              disabled={connectionState === "connecting"}
-            >
-              {connectionState === "connecting" ? "Starting..." : "Start Interview"}
-            </button>
-          )}
-        </div>
-
-        {/* CHAT SECTION */}
-        <div className="md:col-span-3 p-4 rounded shadow flex flex-col bg-white dark:bg-gray-800">
-          <div className="flex-1 overflow-y-auto h-[450px]">
-            {messages.map((msg, index) => (
-              <div
-                key={index}
-                className={`mb-3 ${msg.sender === "user" ? "text-right" : ""}`}
-              >
-                <div className={`text-[11px] uppercase tracking-wide mb-1 ${msg.sender === "user" ? "text-blue-600 dark:text-blue-300" : "text-purple-600 dark:text-purple-300"}`}>
-                  {msg.sender === "user" ? "You" : "Interviewer"}
+            <div className="mx-auto max-w-3xl space-y-5">
+              {messages.map((message, index) => (
+                <div key={`${message.sender}-${index}`} className={message.sender === "user" ? "ml-auto max-w-[85%]" : "mr-auto max-w-[85%]"}>
+                  <p className="mb-1 text-xs font-medium text-slate-500">{message.sender === "user" ? "You" : message.sender === "feedback" ? "Coach note" : "Interviewer"}</p>
+                  <div className={`px-4 py-3 text-sm leading-6 ${message.sender === "user" ? "bg-slate-950 text-white dark:bg-white dark:text-slate-950" : message.sender === "feedback" ? "border-l-2 border-amber-500 bg-amber-50 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" : "bg-slate-100 dark:bg-slate-800"}`}>
+                    {message.text}
+                  </div>
                 </div>
-                <span
-                  className={`inline-block px-4 py-2 rounded-lg
-                    ${
-                      msg.sender === "user"
-                        ? "bg-blue-600 text-white rounded-br-none"
-                        : "bg-purple-100 dark:bg-purple-700 text-gray-900 dark:text-white rounded-bl-none"
-                    }`}
-                >
-                  {msg.text}
-                </span>
-              </div>
-            ))}
-
-            {processing ? (
-              <div className="mb-3">
-                <span className="inline-block px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-sm">
-                  AI is thinking...
-                </span>
-              </div>
-            ) : null}
-
-            <div ref={messagesEndRef} />
+              ))}
+              {processing && started && <div className="text-sm text-slate-500">Interviewer is thinking...</div>}
+              <div ref={messagesEndRef} />
+            </div>
           </div>
 
           {started && (
-            <div className="flex gap-2 mt-4">
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") sendMessage();
-                }}
-                className="flex-1 border dark:border-gray-600 p-2 rounded
-                           bg-white dark:bg-gray-700
-                           text-gray-900 dark:text-white"
-                placeholder="Type your answer..."
-              />
+            <div className="border-t border-slate-200 p-4 dark:border-slate-800 sm:p-6">
+              <div className="mx-auto max-w-3xl">
+                <div className="mb-3 inline-flex border border-slate-300 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800">
+                  <button onClick={() => { stopListening(); setInputMode("text"); }} className={`mode-button ${inputMode === "text" ? "mode-button-active" : ""}`}><Type size={16} /> Type</button>
+                  <button onClick={() => setInputMode("voice")} className={`mode-button ${inputMode === "voice" ? "mode-button-active" : ""}`}><Mic size={16} /> Voice</button>
+                </div>
 
-              <button
-                onClick={sendMessage}
-                disabled={processing || !input.trim()}
-                className="bg-blue-600 text-white px-4 rounded hover:bg-blue-700 transition disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                Send
-              </button>
+                <textarea
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      sendAnswer();
+                    }
+                  }}
+                  rows={3}
+                  placeholder={inputMode === "voice" ? "Start the microphone. Your speech will appear here for review." : "Type your answer..."}
+                  className="w-full resize-none border border-slate-300 bg-white p-3 text-sm outline-none focus:border-emerald-600 dark:border-slate-700 dark:bg-slate-950"
+                />
 
-              <button
-                onClick={() => {
-                  setProcessing(true);
-                  socket.emit("endInterview");
-                }}
-                disabled={processing || messages.length === 0}
-                className="bg-red-500 text-white px-4 rounded hover:bg-red-600 transition disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                End
-              </button>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    {inputMode === "voice" && (
+                      <button onClick={listening ? stopListening : startListening} className={listening ? "danger-button" : "secondary-button"}>
+                        {listening ? <><Square size={16} /> Stop listening</> : <><Mic size={16} /> Start microphone</>}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={endInterview} disabled={processing || messages.length < 2} className="secondary-button"><CircleStop size={17} /> Finish</button>
+                    <button onClick={sendAnswer} disabled={processing || !input.trim()} className="primary-button"><Send size={17} /> Send answer</button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
-        </div>
+        </section>
       </div>
-    </div>
+    </main>
   );
 }
