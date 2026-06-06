@@ -1,48 +1,32 @@
-# 🤖 Smart Recruit AI
+# Interview Prep AI
 
-An intelligent AI-powered recruitment and interview preparation platform that connects job seekers with opportunities and helps them prepare for interviews using advanced AI technology.
+A student-focused MERN application for resume analysis and AI interview practice.
 
----
+## Features
 
-## 🎯 Project Overview
+- PDF resume parsing and a transparent ATS readiness score
+- Score breakdown across skills, projects, education, experience, and completeness
+- Resume-grounded project, technical, and HR practice modes
+- Typed answers and browser speech-to-text with an editable transcript
+- Interview feedback, readiness rating, and practice history
 
-**Smart Recruit AI** is a full-stack application designed to revolutionize the recruitment process by:
+## Run locally
 
-- **For Job Seekers**: Upload resumes, browse job opportunities, and practice interviews with AI
-- **For HR Professionals**: Post jobs, review resumes with AI assistance, and conduct interviews
-- **AI Integration**: Real-time AI-powered interview simulations using Google GenAI
-- **Real-time Communication**: WebSocket-based live interview sessions
+Backend:
 
-The platform combines modern web technologies with machine learning to create an interactive recruitment ecosystem.
+```bash
+cd backend
+npm install
+node server.js
+```
 
----
+Frontend:
 
-## 🛠️ Tech Stack
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-### Backend
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| **Runtime** | Node.js | LTS |
-| **Framework** | Express.js | ^5.2.1 |
-| **Database** | MongoDB | ^9.1.6 |
-| **Real-time** | Socket.io | ^4.8.3 |
-| **AI/ML** | Google GenAI | ^1.40.0 |
-| **Authentication** | JWT | ^9.0.3 |
-| **Password Hashing** | bcryptjs | ^3.0.3 |
-| **File Upload** | Multer | ^2.0.2 |
-| **PDF Processing** | pdf-parse-new | ^2.0.0 |
-| **Dev Tools** | nodemon | ^3.1.11 |
-
-### **Real-time** | Socket.io Client | ^4.8.3 |
-| **Linting** | ESLint | ^9.39.1 |
-
----
- Frontend
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| **Framework** | React | ^19.2.0 |
-| **Build Tool** | Vite | ^7.3.1 |
-| **Styling** | Tailwind CSS | ^3.4.17 |
-| **Routing** | React Router DOM | ^7.13.0 |
-| **HTTP Client** | Axios | ^1.13.5 |
-|
+Configure `MONGO_URI`, `JWT_SECRET`, `GEMINI_API_KEY`, and optionally `GEMINI_MODEL`
+in `backend/.env`. Set `VITE_API_URL` in `frontend/.env`.

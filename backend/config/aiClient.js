@@ -1,59 +1,99 @@
-const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
-
-const formatMessagesForOpenAI = (messages) => {
-  return messages.map((msg) => ({
-    role: ["system", "assistant", "user"].includes(msg.role) ? msg.role : "user",
-    content: String(msg.content || "")
-  }));
-};
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const isResourceExhausted = (error) => {
-  const msg = String(error?.message || "");
-  return msg.includes("429") || msg.includes("rate_limit_exceeded");
+const textPart = (content) => ({
+  text: String(content || "")
+});
+
+const normalizeRole = (role) => {
+  if (role === "assistant" || role === "model") return "model";
+  return "user";
 };
 
-const isQuotaExceeded = (error) => {
-  const msg = String(error?.message || "");
-  return msg.includes("exceeded your current quota") || msg.includes("insufficient_quota");
+const formatMessagesForGemini = (messages) => {
+  const systemParts = [];
+  const contents = [];
+
+  messages.forEach((message) => {
+    const content = String(message?.content || "").trim();
+    if (!content) return;
+
+    if (message.role === "system") {
+      systemParts.push(textPart(content));
+      return;
+    }
+
+    contents.push({
+      role: normalizeRole(message.role),
+      parts: [textPart(content)]
+    });
+  });
+
+  return {
+    contents: contents.length ? contents : [{ role: "user", parts: [textPart("")] }],
+    systemInstruction: systemParts.length ? { parts: systemParts } : undefined
+  };
 };
+
+const buildGeminiPayload = (prompt) => {
+  if (Array.isArray(prompt)) {
+    return formatMessagesForGemini(prompt);
+  }
+
+  return {
+    contents: [
+      {
+        role: "user",
+        parts: [textPart(prompt)]
+      }
+    ]
+  };
+};
+
+const extractGeminiText = (data) => {
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  return parts.map((part) => part.text || "").join("").trim();
+};
+
+const getStatusCode = (error) =>
+  Number(String(error?.message || "").match(/^(\d{3})/)?.[1]);
+
+const isQuotaExceeded = (status, message) =>
+  status === 429 || /quota|rate limit|resource exhausted/i.test(message);
 
 const isNetworkFailure = (error) => {
-  const msg = String(error?.message || "");
+  const message = String(error?.message || "");
   return (
-    msg.includes("fetch failed") ||
-    msg.includes("ECONNRESET") ||
-    msg.includes("ENOTFOUND") ||
-    msg.includes("ETIMEDOUT") ||
-    msg.includes("sending request")
+    message.includes("fetch failed") ||
+    message.includes("ECONNRESET") ||
+    message.includes("ENOTFOUND") ||
+    message.includes("ETIMEDOUT")
   );
 };
 
 const askAI = async (prompt) => {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is not configured");
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is not configured");
   }
-
-  const messages = Array.isArray(prompt)
-    ? formatMessagesForOpenAI(prompt)
-    : [{ role: "user", content: String(prompt || "") }];
 
   const maxAttempts = 3;
   let delay = 800;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await fetch(OPENAI_API_URL, {
+      const response = await fetch(GEMINI_API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+          "x-goog-api-key": process.env.GEMINI_API_KEY
         },
         body: JSON.stringify({
-          model: OPENAI_MODEL,
-          messages
+          ...buildGeminiPayload(prompt),
+          generationConfig: {
+            temperature: 0.2
+          }
         })
       });
 
@@ -63,22 +103,21 @@ const askAI = async (prompt) => {
         throw new Error(`${response.status} ${data?.error?.message || response.statusText}`);
       }
 
-      return data?.choices?.[0]?.message?.content || "";
+      return extractGeminiText(data);
     } catch (error) {
-      console.error("OpenAI Error:", error.message);
+      console.error("Gemini Error:", error.message);
 
-      const quotaExceeded = isQuotaExceeded(error);
-      const rateLimited = isResourceExhausted(error);
+      const message = String(error?.message || "");
+      const status = getStatusCode(error);
+      const quotaExceeded = isQuotaExceeded(status, message);
       const networkFailure = isNetworkFailure(error);
-      const retryable = !quotaExceeded && (rateLimited || networkFailure);
+      const retryable = quotaExceeded || networkFailure;
       const isLast = attempt === maxAttempts;
 
       if (!retryable || isLast) {
         const finalError = new Error(
           quotaExceeded
             ? "AI_QUOTA_EXCEEDED"
-            : rateLimited
-            ? "AI_RATE_LIMITED"
             : networkFailure
               ? "AI_NETWORK_ERROR"
               : "AI request failed"

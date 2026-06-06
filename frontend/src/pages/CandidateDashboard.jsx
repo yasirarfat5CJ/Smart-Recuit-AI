@@ -1,4 +1,4 @@
-import { ArrowRight, BriefcaseBusiness, Code2, FileUp, FolderKanban, History } from "lucide-react";
+import { ArrowRight, Binary, BriefcaseBusiness, Code2, FileUp, FolderKanban, History } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getStudentDashboard, getStudentResume } from "../services/api";
@@ -42,7 +42,10 @@ export default function CandidateDashboard() {
           <FileUp className="mx-auto text-emerald-600" size={38} />
           <h1 className="mt-5 text-3xl font-bold">Start with your resume</h1>
           <p className="mt-3 text-slate-600 dark:text-slate-300">Upload a PDF to generate your ATS breakdown and unlock resume-based practice modes.</p>
-          <button onClick={() => navigate("/upload")} className="primary-button mt-7">Upload resume <ArrowRight size={18} /></button>
+          <div className="mt-7 flex flex-wrap justify-center gap-3">
+            <button onClick={() => navigate("/upload")} className="primary-button">Upload resume <ArrowRight size={18} /></button>
+            <button onClick={() => navigate("/dsa")} className="secondary-button"><Binary size={18} /> DSA practice</button>
+          </div>
         </div>
       </main>
     );
@@ -90,6 +93,24 @@ export default function CandidateDashboard() {
                 <span className="mt-5 flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-400">Start practice <ArrowRight size={16} className="transition group-hover:translate-x-1" /></span>
               </button>
             ))}
+          </div>
+        </section>
+
+        <section className="mt-10 surface p-6">
+          <div className="grid gap-5 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+                <Binary size={22} />
+                <span className="text-sm font-semibold">DSA preparation</span>
+              </div>
+              <h2 className="mt-3 text-xl font-semibold">Practice 100 common DSA problems topic-wise</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
+                Open curated LeetCode and GeeksforGeeks questions by topic, pattern, platform, and difficulty.
+              </p>
+            </div>
+            <button onClick={() => navigate("/dsa")} className="primary-button justify-center">
+              Open DSA sheet <ArrowRight size={17} />
+            </button>
           </div>
         </section>
 

@@ -3,6 +3,6 @@ Express.js
 MongoDB
 Mongoose
 Socket.io
-# OpenAI/Gemini API
+# Gemini API
 Multer
 pdf-parse

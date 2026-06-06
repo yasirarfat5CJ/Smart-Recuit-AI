@@ -24,6 +24,91 @@ const parseJsonFromResponse = (raw) => {
 const hasFormalExperienceSection = (text) =>
   /(^|\n)\s*(work\s+experience|professional\s+experience|experience|internship[s]?)\s*(\n|$)/i.test(text);
 
+const sectionBetween = (text, start, endLabels) => {
+  const pattern = new RegExp(
+    `${start}\\s*([\\s\\S]*?)(?=\\n\\s*(?:${endLabels.join("|")})\\s*\\n|$)`,
+    "i"
+  );
+  return text.match(pattern)?.[1]?.trim() || "";
+};
+
+const splitBulletBlocks = (text) =>
+  String(text || "")
+    .split(/\n\s*(?=•|\u2022|- )/g)
+    .map((item) => item.replace(/^[•\u2022-]\s*/, "").trim())
+    .filter(Boolean);
+
+const parseSkillLines = (skillsText) => {
+  const skills = [];
+  const techStack = [];
+
+  skillsText.split("\n").forEach((line) => {
+    const cleaned = line.replace(/^[•\u2022-]\s*/, "").trim();
+    const [, , values = cleaned] = cleaned.match(/^([^:]+):\s*(.+)$/) || [];
+    const items = values
+      .split(/,|\||\s{2,}/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    skills.push(...items);
+
+    if (/frontend|backend|database|generative|tools|cloud|fundamentals/i.test(cleaned)) {
+      techStack.push(...items);
+    }
+  });
+
+  return {
+    skills: [...new Set(skills)],
+    techStack: [...new Set(techStack)]
+  };
+};
+
+const parseProjects = (projectsText) =>
+  splitBulletBlocks(projectsText).map((block) => {
+    const lines = block.split("\n").map((line) => line.replace(/^[-–]\s*/, "").trim()).filter(Boolean);
+    const firstLine = lines[0] || "";
+    const titleMatch = firstLine.match(/^(.+?)(?:\s*\(([^)]+)\))?(?:\s*\[|$)/);
+    const technologies = titleMatch?.[2]
+      ? titleMatch[2].split(",").map((item) => item.trim()).filter(Boolean)
+      : [];
+
+    return {
+      title: (titleMatch?.[1] || firstLine).trim(),
+      description: lines.slice(1).join(" "),
+      technologies
+    };
+  }).filter((project) => project.title);
+
+const parseEducation = (educationText) =>
+  splitBulletBlocks(educationText).map((block) => {
+    const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+    return {
+      institution: lines[0] || "",
+      degree: lines[1] || "",
+      year: block.match(/\b(20\d{2}(?:\s*[–-]\s*(?:20\d{2}|May\s+20\d{2}|\w+))?)/i)?.[0] || ""
+    };
+  }).filter((item) => item.institution || item.degree);
+
+const buildRawTextFallback = (rawText) => {
+  const summary = sectionBetween(rawText, "Summary", ["Education", "Projects", "Technical Skills", "Certifications"]);
+  const educationText = sectionBetween(rawText, "Education", ["Projects", "Technical Skills", "Certifications"]);
+  const projectsText = sectionBetween(rawText, "Projects", ["Technical Skills", "Certifications", "Experience"]);
+  const skillsText = sectionBetween(rawText, "Technical Skills", ["Certifications", "Projects", "Education"]);
+  const parsedSkills = parseSkillLines(skillsText);
+
+  return {
+    name: rawText.split("\n").map((line) => line.trim()).find(Boolean) || "",
+    email: rawText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "",
+    phone: rawText.match(/(?:\+?\d[\d\s-]{8,}\d)/)?.[0]?.trim() || "",
+    summary,
+    ...parsedSkills,
+    experience: [],
+    experienceYears: 0,
+    projects: parseProjects(projectsText),
+    education: parseEducation(educationText)
+  };
+};
+
 /**
  * Normalise the AI-parsed object into a consistent shape.
  * - camelCase `techStack` (drop `tech_stack`)
@@ -129,6 +214,20 @@ ${rawText}
     console.error("[parseResume] AI response (first 500 chars):", String(aiResponse).slice(0, 500));
     parsed = {};
   }
+
+  const fallbackParsed = buildRawTextFallback(rawText);
+  parsed = {
+    ...fallbackParsed,
+    ...parsed,
+    skills: Array.isArray(parsed.skills) && parsed.skills.length ? parsed.skills : fallbackParsed.skills,
+    techStack: Array.isArray(parsed.techStack) && parsed.techStack.length ? parsed.techStack : fallbackParsed.techStack,
+    projects: Array.isArray(parsed.projects) && parsed.projects.length ? parsed.projects : fallbackParsed.projects,
+    education: Array.isArray(parsed.education) && parsed.education.length ? parsed.education : fallbackParsed.education,
+    summary: parsed.summary || fallbackParsed.summary,
+    name: parsed.name || fallbackParsed.name,
+    email: parsed.email || fallbackParsed.email,
+    phone: parsed.phone || fallbackParsed.phone
+  };
 
   // ── 4. Business-rule overrides ─────────────────────────────────────────────
   if (!hasFormalExperienceSection(rawText)) {
