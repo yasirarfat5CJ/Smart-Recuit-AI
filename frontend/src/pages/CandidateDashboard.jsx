@@ -1,4 +1,4 @@
-import { ArrowRight, Binary, BriefcaseBusiness, Code2, FileUp, FolderKanban, History } from "lucide-react";
+import { ArrowRight, Binary, BookOpenText, BriefcaseBusiness, Code2, FileUp, FolderKanban, History } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getStudentDashboard, getStudentResume } from "../services/api";
@@ -45,6 +45,7 @@ export default function CandidateDashboard() {
           <div className="mt-7 flex flex-wrap justify-center gap-3">
             <button onClick={() => navigate("/upload")} className="primary-button">Upload resume <ArrowRight size={18} /></button>
             <button onClick={() => navigate("/dsa")} className="secondary-button"><Binary size={18} /> DSA practice</button>
+            <button onClick={() => navigate("/resources")} className="secondary-button"><BookOpenText size={18} /> Resources</button>
           </div>
         </div>
       </main>
@@ -96,20 +97,32 @@ export default function CandidateDashboard() {
           </div>
         </section>
 
-        <section className="mt-10 surface p-6">
-          <div className="grid gap-5 md:grid-cols-[1fr_auto] md:items-center">
-            <div>
-              <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
-                <Binary size={22} />
-                <span className="text-sm font-semibold">DSA preparation</span>
-              </div>
-              <h2 className="mt-3 text-xl font-semibold">Practice 100 common DSA problems topic-wise</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-                Open curated LeetCode and GeeksforGeeks questions by topic, pattern, platform, and difficulty.
-              </p>
+        <section className="mt-10 grid gap-4 lg:grid-cols-2">
+          <div className="surface p-6">
+            <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+              <Binary size={22} />
+              <span className="text-sm font-semibold">DSA preparation</span>
             </div>
-            <button onClick={() => navigate("/dsa")} className="primary-button justify-center">
+            <h2 className="mt-3 text-xl font-semibold">Practice 90 common DSA problems topic-wise</h2>
+            <p className="mt-2 min-h-12 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              Open curated LeetCode and GeeksforGeeks questions by topic, pattern, platform, and difficulty.
+            </p>
+            <button onClick={() => navigate("/dsa")} className="primary-button mt-5 justify-center">
               Open DSA sheet <ArrowRight size={17} />
+            </button>
+          </div>
+
+          <div className="surface p-6">
+            <div className="flex items-center gap-2 text-sky-700 dark:text-sky-400">
+              <BookOpenText size={22} />
+              <span className="text-sm font-semibold">Interview resources</span>
+            </div>
+            <h2 className="mt-3 text-xl font-semibold">Revise DBMS, SQL, Git, Docker, OS, and design</h2>
+            <p className="mt-2 min-h-12 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              Keep common concepts, queries, commands, and system design notes in one searchable place.
+            </p>
+            <button onClick={() => navigate("/resources")} className="secondary-button mt-5 justify-center">
+              Open resources <ArrowRight size={17} />
             </button>
           </div>
         </section>

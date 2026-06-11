@@ -7,6 +7,7 @@ import Interview from "./pages/Interview";
 import Summary from "./pages/Summary";
 import CandidateDashboard from "./pages/CandidateDashboard";
 import DSAPrep from "./pages/DSAPrep";
+import Resources from "./pages/Resources";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/candidate/:id" element={<StudentRoute><CandidateDashboard /></StudentRoute>} />
         <Route path="/upload" element={<StudentRoute><UploadResume /></StudentRoute>} />
         <Route path="/dsa" element={<StudentRoute><DSAPrep /></StudentRoute>} />
+        <Route path="/resources" element={<StudentRoute><Resources /></StudentRoute>} />
         <Route path="/interview/:candidateId" element={<StudentRoute><Interview /></StudentRoute>} />
         <Route path="/summary" element={<StudentRoute><Summary /></StudentRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />

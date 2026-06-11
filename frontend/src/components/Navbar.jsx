@@ -21,7 +21,12 @@ export default function Navbar() {
   };
 
   const links = userId
-    ? [{ to: "/dashboard", label: "Dashboard" }, { to: "/dsa", label: "DSA" }, { to: "/upload", label: "Resume" }]
+    ? [
+      { to: "/dashboard", label: "Dashboard" },
+      { to: "/dsa", label: "DSA" },
+      { to: "/resources", label: "Resources" },
+      { to: "/upload", label: "Resume" }
+    ]
     : [];
 
   return (
