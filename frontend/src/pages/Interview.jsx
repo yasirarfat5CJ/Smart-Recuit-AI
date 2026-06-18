@@ -18,15 +18,19 @@ export default function Interview() {
   const [inputMode, setInputMode] = useState("text");
   const [listening, setListening] = useState(false);
   const [error, setError] = useState("");
+  const [voiceNotice, setVoiceNotice] = useState("");
   const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
 
   const stopListening = () => {
     recognitionRef.current?.stop();
     setListening(false);
+    setVoiceNotice("");
   };
 
   const startListening = () => {
+    if (listening) return;
+
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) {
       setError("Voice input is not supported in this browser. Use Chrome or Edge, or type your answer.");
@@ -34,6 +38,7 @@ export default function Interview() {
     }
 
     setError("");
+    setVoiceNotice("");
     const recognition = new Recognition();
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -51,16 +56,39 @@ export default function Interview() {
     };
     recognition.onerror = (event) => {
       setListening(false);
-      if (event.error !== "aborted") setError(`Microphone error: ${event.error}.`);
+
+      if (event.error === "aborted") return;
+
+      if (event.error === "no-speech") {
+        setVoiceNotice("No speech was detected. Press Start microphone again and speak after the browser indicator appears.");
+        return;
+      }
+
+      const messagesByError = {
+        "audio-capture": "No microphone was found. Check your input device and try again.",
+        "not-allowed": "Microphone permission is blocked. Allow microphone access in the browser and try again.",
+        "service-not-allowed": "Speech recognition is blocked by the browser. Allow microphone access or type your answer.",
+        network: "Speech recognition could not connect. Try again, or type your answer."
+      };
+      setError(messagesByError[event.error] || `Microphone error: ${event.error}.`);
     };
-    recognition.onend = () => setListening(false);
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
     recognitionRef.current = recognition;
-    recognition.start();
-    setListening(true);
+    try {
+      recognition.start();
+      setListening(true);
+      setVoiceNotice("Listening. Speak clearly and keep the microphone close.");
+    } catch {
+      setError("Could not start the microphone. Wait a moment and try again.");
+    }
   };
 
   const startInterview = () => {
     setError("");
+    setVoiceNotice("");
     setProcessing(true);
     socket.connect();
     socket.emit("startInterview", { candidateId, interviewType });
@@ -138,6 +166,11 @@ export default function Interview() {
         </header>
 
         {error && <div className="error-banner m-4 sm:mx-6">{error}</div>}
+        {voiceNotice && !error && (
+          <div className="m-4 border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100 sm:mx-6">
+            {voiceNotice}
+          </div>
+        )}
 
         <section className="flex flex-1 flex-col bg-white dark:bg-slate-900">
           <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
@@ -168,7 +201,7 @@ export default function Interview() {
               <div className="mx-auto max-w-3xl">
                 <div className="mb-3 inline-flex border border-slate-300 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800">
                   <button onClick={() => { stopListening(); setInputMode("text"); }} className={`mode-button ${inputMode === "text" ? "mode-button-active" : ""}`}><Type size={16} /> Type</button>
-                  <button onClick={() => setInputMode("voice")} className={`mode-button ${inputMode === "voice" ? "mode-button-active" : ""}`}><Mic size={16} /> Voice</button>
+                  <button onClick={() => { setError(""); setVoiceNotice(""); setInputMode("voice"); }} className={`mode-button ${inputMode === "voice" ? "mode-button-active" : ""}`}><Mic size={16} /> Voice</button>
                 </div>
 
                 <textarea

@@ -9,6 +9,10 @@ const modes = [
   { id: "hr", title: "HR interview", description: "Behavioral questions connected to your education, experience, and projects.", icon: <BriefcaseBusiness size={25} />, accent: "text-rose-600" }
 ];
 
+const formatBreakdownLabel = (label) => label
+  .replace(/([A-Z])/g, " $1")
+  .replace(/^./, (letter) => letter.toUpperCase());
+
 export default function CandidateDashboard() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -71,12 +75,15 @@ export default function CandidateDashboard() {
             <p className="text-sm font-medium text-slate-500">ATS readiness</p>
             <p className="mt-2 text-5xl font-bold text-emerald-600">{resume.atsScore}</p>
             <p className="mt-1 text-sm text-slate-500">out of 100</p>
+            <p className="mt-3 inline-flex bg-slate-100 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+              {resume.atsMode === "jd" ? "JD ATS" : "Normal ATS"}
+            </p>
             <p className="mt-6 text-xs text-slate-500">{data.uploadCount} resume upload{data.uploadCount === 1 ? "" : "s"}</p>
           </div>
           <div className="surface grid gap-px overflow-hidden bg-slate-200 dark:bg-slate-700 sm:grid-cols-5">
             {Object.entries(resume.atsBreakdown || {}).map(([label, value]) => (
               <div key={label} className="bg-white p-5 dark:bg-slate-900">
-                <p className="text-xs capitalize text-slate-500">{label}</p>
+                <p className="text-xs text-slate-500">{formatBreakdownLabel(label)}</p>
                 <p className="mt-2 text-2xl font-semibold">{value}</p>
               </div>
             ))}
