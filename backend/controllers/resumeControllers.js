@@ -33,6 +33,13 @@ const uploadResume = async (req, res) => {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
+    const atsMode = req.body?.atsMode === "jd" ? "jd" : "normal";
+    const jobDescription = String(req.body?.jobDescription || "").trim();
+
+    if (atsMode === "jd" && jobDescription.length < 80) {
+      return res.status(400).json({ message: "Paste a job description of at least 80 characters for JD ATS scoring." });
+    }
+
     // ── Step 1: Parse resume ───────────────────────────────────────────────
     // parseResume returns a plain JS object — no JSON string, no double-parse.
     // The object includes `rawText` for ATS scoring (in-memory only).
@@ -61,7 +68,7 @@ const uploadResume = async (req, res) => {
     // full-text skill matching. We strip it before DB save below.
     let atsResult = { score: 0, breakdown: {}, suggestions: [] };
     try {
-      atsResult = calculateATSScore(parsedResume);
+      atsResult = calculateATSScore(parsedResume, { mode: atsMode, jobDescription });
     } catch (scoreError) {
       console.warn("[uploadResume] ATS scoring failed, defaulting to 0:", scoreError.message);
     }
@@ -79,7 +86,10 @@ const uploadResume = async (req, res) => {
       parsedResume,
       atsScore: atsResult.score,
       atsBreakdown: atsResult.breakdown,
-      atsSuggestions: atsResult.suggestions
+      atsSuggestions: atsResult.suggestions,
+      atsMode,
+      jobDescription: atsMode === "jd" ? jobDescription.slice(0, 6000) : "",
+      atsMatchDetails: atsResult.matchDetails || {}
     });
 
     return res.json({
@@ -87,7 +97,9 @@ const uploadResume = async (req, res) => {
       candidate,
       fallbackUsed,
       atsBreakdown: atsResult.breakdown,
-      atsSuggestions: atsResult.suggestions
+      atsSuggestions: atsResult.suggestions,
+      atsMode,
+      atsMatchDetails: atsResult.matchDetails || {}
     });
 
   } catch (error) {

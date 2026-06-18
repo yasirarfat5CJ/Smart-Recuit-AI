@@ -33,6 +33,19 @@ const candidateSchema = new mongoose.Schema(
       type: [String],
       default: []
     },
+    atsMode: {
+      type: String,
+      enum: ["normal", "jd"],
+      default: "normal"
+    },
+    jobDescription: {
+      type: String,
+      default: ""
+    },
+    atsMatchDetails: {
+      type: Object,
+      default: {}
+    },
     interviewStatus: {
       type: String,
       enum: ["pending", "in_progress", "completed"],

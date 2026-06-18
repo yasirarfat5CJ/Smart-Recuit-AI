@@ -49,8 +49,50 @@ module.exports = (io) => {
     return focusTokens.some((token) => questionText.includes(token));
   };
 
-  const buildFocusQuestion = (focus) =>
-    `Can you explain ${focus} based on what you mentioned in your resume?`;
+  const modeLabels = {
+    project: "project interview",
+    technical: "technical skills interview",
+    hr: "HR interview"
+  };
+
+  const getModeRules = (type) => {
+    if (type === "project") {
+      return [
+        "Ask only project-based questions from the listed resume projects.",
+        "Focus on architecture, implementation, role/contribution, tradeoffs, bugs, deployment, scaling, and design choices.",
+        "Do not ask standalone theory questions unless they directly support a project decision.",
+        "It is acceptable to ask: how did you maintain conversational context in your RAG project?"
+      ];
+    }
+
+    if (type === "hr") {
+      return [
+        "Ask only HR/behavioral questions tied to the resume.",
+        "Focus on communication, teamwork, conflict, leadership, learning, strengths, weaknesses, ownership, and career motivation.",
+        "Do not ask technical implementation or coding questions.",
+        "Use STAR-style prompts when possible."
+      ];
+    }
+
+    return [
+      "Ask only technical skill/concept questions based on resume skills and tech stack.",
+      "Focus on concepts, fundamentals, syntax, comparisons, debugging ideas, best practices, and tradeoffs.",
+      "Do not ask project-explanation questions such as architecture, how you built a listed project, or how a project maintained context.",
+      "You may mention a resume project only as light evidence for why a skill is relevant, but the question itself must be about the skill/concept."
+    ];
+  };
+
+  const buildFocusQuestion = (focus, type = "technical") => {
+    if (type === "project") {
+      return `In your ${focus} project, what was one important design decision you made and why?`;
+    }
+
+    if (type === "hr") {
+      return `Can you describe a situation from your resume where you showed ownership or handled a challenge?`;
+    }
+
+    return `Can you explain the core concept of ${focus} and one practical use case?`;
+  };
 
   const parseCandidateControl = (answer) => {
     const text = String(answer || "").trim();
@@ -130,6 +172,50 @@ module.exports = (io) => {
     return compactText(project.title || project.name || project.description);
   };
 
+  const questionViolatesMode = (question, type, resumeContext = {}) => {
+    const normalized = normalizeQuestion(question);
+    if (!normalized) return true;
+
+    const projectTitles = (resumeContext.projects || [])
+      .map((project) => normalizeQuestion(getProjectTitle(project)))
+      .filter(Boolean);
+
+    if (type === "technical") {
+      const referencesProjectTitle = projectTitles.some((title) =>
+        title && questionSimilarity(normalized, title) >= 0.45
+      );
+      const projectDeepDive = /\b(your|you)\b.*\b(project|system|platform|application|app|built|designed|implemented|architecture|deployed)\b/i.test(question) ||
+        /\b(project|system|platform|application|app)\b.*\b(you|your)\b/i.test(question);
+
+      return referencesProjectTitle || projectDeepDive;
+    }
+
+    if (type === "hr") {
+      return /\b(code|algorithm|complexity|api|database schema|architecture|implementation|debug|deploy|socket|jwt|react|node|mongodb|rag|faiss|langchain)\b/i.test(question);
+    }
+
+    if (type === "project") {
+      return !/\b(project|system|platform|application|app|built|designed|implemented|architecture|feature|challenge|deploy|scal)\b/i.test(question);
+    }
+
+    return false;
+  };
+
+  const modeSafeRequestedFocus = (focus, type) => {
+    const text = String(focus || "").trim();
+    if (!text) return null;
+
+    if (type === "technical" && /\b(project|system|platform|application|app|architecture|built|implemented|deployed)\b/i.test(text)) {
+      return null;
+    }
+
+    if (type === "hr" && /\b(code|algorithm|api|database|architecture|react|node|mongodb|docker|rag|langchain|faiss)\b/i.test(text)) {
+      return null;
+    }
+
+    return text;
+  };
+
   const buildResumeInterviewPlan = async (resumeContext = {}, interviewType = "technical") => {
     const allTopics = [
       ...(resumeContext.projects || []).map((project) => ({
@@ -167,7 +253,7 @@ module.exports = (io) => {
     const fallbackTopics = interviewType === "project"
       ? allTopics.filter((item) => item.category === "project")
       : interviewType === "technical"
-        ? allTopics.filter((item) => ["skill", "project"].includes(item.category))
+        ? allTopics.filter((item) => item.category === "skill")
         : allTopics.filter((item) => ["project", "experience", "education"].includes(item.category));
 
     const fallbackPlan = fallbackTopics.length
@@ -191,12 +277,14 @@ Return ONLY valid JSON:
 
 Rules:
 - Interview mode is "${interviewType}".
-- Project mode must use only listed projects and their technologies.
-- Technical mode must use only listed skills, technologies, and technical project evidence.
-- HR mode must ask behavioral questions tied to listed projects, education, or experience.
+- Project mode must output only category "project" topics.
+- Technical mode must output only category "skill" topics. Do not output project names as technical topics.
+- HR mode must output only category "project", "experience", or "education" topics for behavioral prompts.
 - Do not add generic interview sections unless they appear in the resume.
 - Do not invent skills, projects, companies, or tools.
-- Prefer concrete projects, experience items, and strongest resume skills.
+- In technical mode, prefer concrete skills/technologies such as React, Node.js, DBMS, SQL, RAG, Docker, Git, OS, OOPS, or similar resume skills.
+- In project mode, prefer concrete projects and project-specific technologies.
+- In HR mode, prefer education, experience, teamwork, leadership, ownership, and project challenges.
 - Order topics from strongest / most relevant resume evidence to weaker evidence.
 - Keep each focus short.
 
@@ -222,7 +310,7 @@ ${JSON.stringify(resumeContext)}
 
       const modeTopics = topics.filter((topic) => {
         if (interviewType === "project") return topic.category === "project";
-        if (interviewType === "technical") return ["project", "skill"].includes(topic.category);
+        if (interviewType === "technical") return topic.category === "skill";
         return ["project", "experience", "education"].includes(topic.category);
       });
 
@@ -348,9 +436,10 @@ Candidate answer: ${answer}
     }
   };
 
-  const generateInterviewQuestion = async ({ resumeContext, answer, previousQuestion, askedQuestions, currentFocus, requestedFocus = null }) => {
+  const generateInterviewQuestion = async ({ resumeContext, answer, previousQuestion, askedQuestions, currentFocus, requestedFocus = null, interviewType = "technical" }) => {
+    const modeRules = getModeRules(interviewType).map((rule) => `- ${rule}`).join("\n");
     const prompt = `
-You are a senior technical interviewer conducting a real-time interview.
+You are conducting a realistic ${modeLabels[interviewType] || modeLabels.technical}.
 
 Rules:
 - Ask exactly ONE next question.
@@ -361,7 +450,13 @@ Rules:
 - If requested focus is present, the question must be about that focus. Do not substitute a different resume skill.
 - If requested focus is a broad area such as DSA, OOPS, databases, or system design, mention that area explicitly in the question.
 - If requested focus is absent, the question must be about the current resume focus.
+- Follow the selected interview mode strictly:
+${modeRules}
+- Never ask a project deep-dive question during technical mode.
+- Never ask a technical implementation question during HR mode.
+- Never ask generic questions unrelated to resume evidence.
 
+Interview mode: ${interviewType}
 Current resume focus: ${JSON.stringify(currentFocus)}
 Requested focus: ${requestedFocus || "none"}
 Previous question: ${previousQuestion}
@@ -375,17 +470,25 @@ Return only the question text — no JSON, no bullets, no preamble.
     try {
       const raw = await askAI(prompt);
       const q = sanitizeQuestionText(raw);
-      if (q && !hasSimilarQuestion(q, askedQuestions) && focusAppearsInQuestion(requestedFocus, q)) return q;
+      if (
+        q &&
+        !hasSimilarQuestion(q, askedQuestions) &&
+        focusAppearsInQuestion(requestedFocus, q) &&
+        !questionViolatesMode(q, interviewType, resumeContext)
+      ) {
+        return q;
+      }
     } catch (err) {
       console.warn("[generateInterviewQuestion] AI failed:", err.message);
     }
 
-    return buildFocusQuestion(requestedFocus || currentFocus?.focus || "the most relevant part of your resume");
+    return buildFocusQuestion(requestedFocus || currentFocus?.focus || "the most relevant part of your resume", interviewType);
   };
 
-  const generateEvaluationTurn = async ({ responseState, resumeContext, answer, previousQuestion, askedQuestions, recentTranscript, consecutiveMisses, currentFocus }) => {
+  const generateEvaluationTurn = async ({ responseState, resumeContext, answer, previousQuestion, askedQuestions, recentTranscript, consecutiveMisses, currentFocus, interviewType = "technical" }) => {
+    const modeRules = getModeRules(interviewType).map((rule) => `- ${rule}`).join("\n");
     const prompt = `
-You are an adaptive interview coach. Generate the next interview turn dynamically.
+You are an adaptive interview coach conducting a ${modeLabels[interviewType] || modeLabels.technical}. Generate the next interview turn dynamically.
 
 Return ONLY valid JSON:
 {
@@ -407,10 +510,16 @@ Rules:
 - Avoid hardcoded curricula. Use the job/resume context and transcript.
 - Never mention unrelated technologies that are not in the question, answer, transcript, or resume.
 - Do not repeat or closely paraphrase already asked questions.
+- Follow the selected interview mode strictly:
+${modeRules}
+- If the current mode is technical, nextQuestion must be about a skill/concept, not how a resume project was designed.
+- If the current mode is project, nextQuestion must be about implementation/design/decisions in a listed project.
+- If the current mode is HR, nextQuestion must be behavioral/situational, not technical.
 
 Response classification:
 ${JSON.stringify(responseState)}
 
+Interview mode: ${interviewType}
 Current resume focus: ${JSON.stringify(currentFocus)}
 Requested focus: ${responseState.requestedFocus || "none"}
 Previous question: ${previousQuestion}
@@ -442,13 +551,14 @@ ${JSON.stringify(askedQuestions)}
           ? "No problem; let us adjust the question."
           : "Thanks, I have enough context to continue.",
           nextQuestion: await generateInterviewQuestion({
-          resumeContext,
-          answer,
-          previousQuestion,
-          askedQuestions,
-          currentFocus,
-          requestedFocus: responseState.requestedFocus
-        }),
+            resumeContext,
+            answer,
+            previousQuestion,
+            askedQuestions,
+            currentFocus,
+            requestedFocus: responseState.requestedFocus,
+            interviewType
+          }),
         shouldAdvance: responseState.shouldAdvance,
         answerQuality: responseState.answerQuality
       };
@@ -553,10 +663,9 @@ ${JSON.stringify(askedQuestions)}
         if (
           interviewType === "technical" &&
           resumeContext.skills.length === 0 &&
-          resumeContext.techStack.length === 0 &&
-          resumeContext.projects.length === 0
+          resumeContext.techStack.length === 0
         ) {
-          return socket.emit("error", "Add technical skills or projects to your resume before starting technical practice.");
+          return socket.emit("error", "Add technical skills or technologies to your resume before starting technical practice.");
         }
 
         resumeInterviewPlan = await buildResumeInterviewPlan(resumeContext, interviewType);
@@ -579,9 +688,10 @@ INTERVIEW STYLE:
 - Never repeat the same question.
 - Keep tone human and conversational.
 - Stay strictly within the uploaded resume. Never invent a skill, project, role, or achievement.
-- In project mode, ask only about listed projects and their implementation.
-- In technical mode, ask only about listed skills, technologies, and technical project evidence.
-- In HR mode, ask behavioral questions anchored to listed projects, education, or experience.
+- In project mode, ask only about listed projects and their implementation/design decisions.
+- In technical mode, ask only about listed skills and technologies. Do not ask project deep-dive questions.
+- In HR mode, ask only behavioral/situational questions anchored to listed projects, education, or experience. Do not ask coding or architecture questions.
+- Make questions realistic: start approachable, then increase depth based on answer quality.
 
 Candidate resume context:
 ${JSON.stringify(resumeContext)}
@@ -596,7 +706,8 @@ ${JSON.stringify(resumeContext)}
           answer: "",
           previousQuestion: "",
           askedQuestions,
-          currentFocus: firstFocus
+          currentFocus: firstFocus,
+          interviewType
         });
 
         askedQuestions.push(firstQuestion);
@@ -660,10 +771,15 @@ ${JSON.stringify(resumeContext)}
           consecutiveApologies = 0;
         }
 
-        const switchFocus = responseState.requestedFocus
-          ? { focus: responseState.requestedFocus, evidence: "candidate requested topic" }
+        const requestedFocusForMode = modeSafeRequestedFocus(responseState.requestedFocus, interviewType);
+        const requestedCategoryForMode = interviewType === "project"
+          ? responseState.requestedCategory
+          : null;
+
+        const switchFocus = requestedFocusForMode
+          ? { focus: requestedFocusForMode, evidence: "candidate requested topic" }
           : responseState.intent === "topic_switch"
-            ? getNextPlanFocus(resumeInterviewPlan, currentFocus, interviewTurn, responseState.requestedCategory)
+            ? getNextPlanFocus(resumeInterviewPlan, currentFocus, interviewTurn, requestedCategoryForMode)
             : null;
 
         const targetFocus = switchFocus ||
@@ -686,26 +802,31 @@ ${JSON.stringify(resumeContext)}
               previousQuestion: "",
               askedQuestions,
               currentFocus: targetFocus,
-              requestedFocus: targetFocus.focus
+              requestedFocus: targetFocus.focus,
+              interviewType
             }),
             shouldAdvance: true,
             answerQuality: "topic_switch"
           };
         } else {
           evaluation = await generateEvaluationTurn({
-            responseState,
+            responseState: {
+              ...responseState,
+              requestedFocus: requestedFocusForMode
+            },
             resumeContext,
             answer,
             previousQuestion,
             askedQuestions,
             recentTranscript,
             consecutiveMisses: missesBeforeThisAnswer,
-            currentFocus: targetFocus
+            currentFocus: targetFocus,
+            interviewType
           });
         }
 
-        if (responseState.requestedFocus && !focusAppearsInQuestion(responseState.requestedFocus, evaluation.nextQuestion)) {
-          evaluation.nextQuestion = buildFocusQuestion(responseState.requestedFocus);
+        if (requestedFocusForMode && !focusAppearsInQuestion(requestedFocusForMode, evaluation.nextQuestion)) {
+          evaluation.nextQuestion = buildFocusQuestion(requestedFocusForMode, interviewType);
         }
 
         if (responseState.intent === "clarification_request") {
@@ -723,13 +844,15 @@ ${JSON.stringify(resumeContext)}
             previousQuestion: "",
             askedQuestions,
             currentFocus: targetFocus,
-            requestedFocus: targetFocus.focus
+            requestedFocus: targetFocus.focus,
+            interviewType
           });
         }
 
         // Safety net: regenerate if next question is missing or a duplicate
         if (
           !evaluation.nextQuestion ||
+          questionViolatesMode(evaluation.nextQuestion, interviewType, resumeContext) ||
           (evaluation.shouldAdvance !== false &&
             hasSimilarQuestion(evaluation.nextQuestion, askedQuestions))
         ) {
@@ -739,8 +862,13 @@ ${JSON.stringify(resumeContext)}
             previousQuestion,
             askedQuestions,
             currentFocus: targetFocus,
-            requestedFocus: responseState.requestedFocus
+            requestedFocus: requestedFocusForMode,
+            interviewType
           });
+        }
+
+        if (questionViolatesMode(evaluation.nextQuestion, interviewType, resumeContext)) {
+          evaluation.nextQuestion = buildFocusQuestion(targetFocus?.focus, interviewType);
         }
 
         evaluation.nextQuestion = sanitizeQuestionText(evaluation.nextQuestion);
